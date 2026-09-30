@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# recordings and machine-specific alignment
+*.csv
+*.png
+lidar_align.json

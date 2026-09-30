@@ -1,0 +1,6 @@
+pyserial>=3.5
+rplidar-roboticia>=0.9.5
+pygame>=2.6
+numpy>=1.24
+scipy>=1.10
+matplotlib>=3.7
