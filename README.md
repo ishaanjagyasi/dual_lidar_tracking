@@ -114,3 +114,18 @@ does trip up the C1, both handled in `lidar_io.py`:
 
 Also worth knowing: the sensor takes about 2 seconds to reach full speed, so
 rates measured right after connecting look low.
+
+## Vendor material
+
+`vendor/` holds SLAMTEC's own files, unmodified, so the protocol details stay
+next to the code that relies on them:
+
+- `vendor/docs/` - C1 datasheet and kit user manual, plus the S-series protocol
+  and SDK manuals. The C1 speaks the same protocols.
+- `vendor/sdk/` - the official `rplidar_sdk` (C++). Not used at runtime, but it
+  is the reference for anything the Python library doesn't cover, such as the
+  high-speed "dense capsule" scan mode.
+
+SLAMTEC's SDK is BSD 2-clause; its `LICENSE` is kept with it. Not included: the
+RoboStudio app (Windows only), the SDK zip (same as the extracted folder), and
+the C1 3D model, all available from SLAMTEC.
