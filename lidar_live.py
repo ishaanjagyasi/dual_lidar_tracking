@@ -577,10 +577,12 @@ def main():
         for n, (text, c) in enumerate(lines):
             screen.blit(font.render(text[:74], True, c), (24, 56 + n * 24))
 
-        help_text = ("TAB pick  arrows  < > turn  K align  V carpet  B learn  T person  "
-                     "0 reset  S save  L load  C csv  P trails  G grid  ESC quit")
-        hint = font.render(help_text, True, DIM)
-        screen.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 26))
+        for row, help_text in enumerate((
+                "TAB pick a sensor   arrows move   < > turn   K align   0 reset   S save   L load",
+                "V carpet   B learn the empty carpet   T person   "
+                "P trails   G grid   C csv   R view   ESC quit")):
+            hint = font.render(help_text, True, DIM)
+            screen.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 46 + row * 20))
 
         pygame.display.flip()
         clock.tick(60)

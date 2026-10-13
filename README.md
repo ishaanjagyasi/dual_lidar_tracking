@@ -41,6 +41,8 @@ because a sensor only knows distances in its own coordinates.
 | `<` `>` | turn it |
 | `K` | **line it up automatically** |
 | `V` | carpet crop: off / wedge / wedge + square |
+| `B` | learn the empty carpet (stay off it) |
+| `T` | follow a person |
 | `S` / `L` | save / reload alignment |
 | `0` | reset the picked sensor |
 | `C` | save what's on screen as a CSV |
@@ -91,6 +93,31 @@ Dropped points are still drawn, very dim, so you can see what is being cut.
 This assumes the carpet is square. A rectangle isn't fixed by its diagonal
 alone and would need its side length measured too.
 
+## Following a person
+
+`B` with the carpet empty, then `T`. It reports the point midway between your
+two legs, in metres from sensor A.
+
+It works whether the sensors are low enough to see shoes or high enough to see
+shins - the logic only cares that there are one or two blobs, not what part of
+a leg they are.
+
+1. **background** - with the carpet empty, it remembers how far the nearest
+   static thing is at every angle. Anything nearer than that later is a person.
+2. **blobs** - the leftover points are grouped. Each blob is a leg.
+3. **midpoint** - two blobs give the point between them. One wide blob is both
+   legs together. One narrow blob is a single leg, and the midpoint is placed
+   using the offset last measured between that leg and the middle.
+
+**A leg in mid-stride lifts clear of the scan slice and disappears, so seeing
+only one is normal while walking.** In a simulated lap that was the case on
+182 of 238 readings, which is why the one-leg rule matters more than it sounds.
+
+When nothing is visible at all it keeps moving at the last speed for 0.3 s,
+then stands still for a second, then gives up and says so. It never keeps
+publishing a position as though it were fresh: the state and the age of the
+last real sighting are always on screen.
+
 ## Recording and plotting
 
 ```bash
@@ -105,17 +132,20 @@ python3 lidar_plot.py walk.csv                       # top-down picture
 | `lidar_io.py` | opening, reading and closing a sensor |
 | `align.py` | automatic alignment between sensors |
 | `area.py` | the wedge and carpet-square filters |
+| `tracker.py` | background, blobs, and following a person |
 | `lidar_live.py` | the live view |
 | `lidar_dump.py` | record to CSV |
 | `lidar_plot.py` | draw a recorded CSV |
 | `tests/test_align.py` | alignment checked against known answers |
 | `tests/test_area.py` | carpet filter checked against known geometry |
+| `tests/test_tracker.py` | tracking checked against a made-up walk |
 
 ## Tests
 
 ```bash
 python3 tests/test_align.py
 python3 tests/test_area.py
+python3 tests/test_tracker.py
 ```
 
 Builds a fake room with two sensors a known distance apart and checks the
@@ -127,6 +157,13 @@ degrees out or the room is a bare corridor.
 `test_area.py` checks the carpet square comes out right for any size at any
 angle, that the 90-degree fact holds, and that a point just off the edge is
 dropped unless the margin covers it.
+
+`test_tracker.py` walks an imaginary person past imaginary sensors: both legs
+visible, one leg vanishing mid-stride, feet together, a total dropout, a bag
+left on the carpet, and an impossible jump. Running the whole app against two
+fake sensors with someone walking a lap, the midpoint stayed within 4 cm
+(median; 10 cm at worst) of where that person actually was, never gave up while
+they were walking, and reported "lost" once they left.
 
 ## Notes
 
