@@ -40,6 +40,7 @@ because a sensor only knows distances in its own coordinates.
 | arrows | move it |
 | `<` `>` | turn it |
 | `K` | **line it up automatically** |
+| `V` | carpet crop: off / wedge / wedge + square |
 | `S` / `L` | save / reload alignment |
 | `0` | reset the picked sensor |
 | `C` | save what's on screen as a CSV |
@@ -72,6 +73,24 @@ Each point is matched to the *wall* its nearest neighbour sits on, not to that
 point itself. The two sensors never sample the same spots on a wall, so
 point-to-point matching drags the answer along the wall by a few centimetres.
 
+## Cropping to the carpet
+
+The sensors sit at opposite ends of the carpet's diagonal, so `V` cuts away
+everything that isn't on it. Two filters, both worked out from where the
+sensors are, so nothing has to be measured and the carpet can be any size:
+
+- **the wedge** - each sensor only looks in a cone facing the other one, 145
+  degrees by default (`--fov`). A square corner spans exactly 90 degrees, so
+  anything above that is margin for catching a foot stepping off the edge.
+- **the square** - two opposite corners fix a square completely, so points
+  outside it are dropped. `--margin` (0.2 m by default) keeps a little of the
+  floor just outside the edge.
+
+Dropped points are still drawn, very dim, so you can see what is being cut.
+
+This assumes the carpet is square. A rectangle isn't fixed by its diagonal
+alone and would need its side length measured too.
+
 ## Recording and plotting
 
 ```bash
@@ -85,15 +104,18 @@ python3 lidar_plot.py walk.csv                       # top-down picture
 |---|---|
 | `lidar_io.py` | opening, reading and closing a sensor |
 | `align.py` | automatic alignment between sensors |
+| `area.py` | the wedge and carpet-square filters |
 | `lidar_live.py` | the live view |
 | `lidar_dump.py` | record to CSV |
 | `lidar_plot.py` | draw a recorded CSV |
 | `tests/test_align.py` | alignment checked against known answers |
+| `tests/test_area.py` | carpet filter checked against known geometry |
 
 ## Tests
 
 ```bash
 python3 tests/test_align.py
+python3 tests/test_area.py
 ```
 
 Builds a fake room with two sensors a known distance apart and checks the
@@ -101,6 +123,10 @@ alignment recovers it: within about a millimetre and a few hundredths of a
 degree in a normal room, still working with 10 mm of noise or a 35-degree error
 in the starting guess, and refusing (rather than guessing) when the guess is 90
 degrees out or the room is a bare corridor.
+
+`test_area.py` checks the carpet square comes out right for any size at any
+angle, that the 90-degree fact holds, and that a point just off the edge is
+dropped unless the margin covers it.
 
 ## Notes
 

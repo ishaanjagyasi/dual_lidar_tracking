@@ -9,6 +9,11 @@
 # until the walls from both sensors sit on top of each other. Press S to save,
 # and it comes back next time (remembered per sensor serial number).
 #
+# V crops to the carpet: the two sensors sit at opposite ends of its diagonal,
+# so each one only looks through a wedge facing the other (145 degrees by
+# default), and anything outside the square those two corners make is dropped.
+# Both come from where the sensors are, so the carpet can be any size.
+#
 # K lines the picked sensor up with sensor A automatically, by matching the
 # shapes both of them see (see align.py). Nudge it roughly into place first,
 # keep people out of the area, and press K.
@@ -17,6 +22,7 @@
 #        K line it up automatically
 #        S save alignment    L reload it
 #        drag / wheel to pan and zoom   R reset view
+#        V carpet crop: off / wedge / wedge + square
 #        P trails   G 500mm grid   C save a CSV of what's on screen   ESC quit
 #        hold SHIFT for bigger steps
 
@@ -32,7 +38,10 @@ from collections import deque
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import pygame
 
+import numpy as np
+
 import align
+import area
 import lidar_io
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -47,6 +56,9 @@ DIM = (130, 140, 155)
 WARN = (245, 180, 70)
 OK = (80, 210, 130)
 PICKED = (255, 255, 255)
+CARPET = (110, 215, 170)
+WEDGE = (55, 95, 80)
+DROPPED = (46, 50, 60)
 
 # one colour per sensor: points, and a dimmer version for trails
 COLOURS = [
@@ -153,17 +165,46 @@ def save_alignment(sensors):
     return f"saved to {os.path.basename(ALIGN_FILE)}"
 
 
-def save_csv(sensors):
+def carpet_corners(sensors):
+    """The carpet, worked out from the two sensors on its diagonal."""
+    if len(sensors) < 2:
+        return None
+    return area.square_from_diagonal(sensors[0].offset[:2], sensors[1].offset[:2])
+
+
+def facing_point(sensors, n):
+    """Where sensor n is looking: the other sensor, or the middle of the others."""
+    others = [s.offset[:2] for m, s in enumerate(sensors) if m != n]
+    if not others:
+        return None
+    return np.mean(np.asarray(others, dtype=float), axis=0)
+
+
+def keep_mask(sensor, world, sensors, n, mode, fov, margin, corners):
+    """Which of this sensor's points to keep, given the crop setting."""
+    if mode == 0 or len(world) == 0:
+        return np.ones(len(world), dtype=bool)
+    facing = facing_point(sensors, n)
+    if facing is None:
+        return np.ones(len(world), dtype=bool)
+    return area.carpet_mask(world, sensor.offset[:2], facing, fov,
+                            corners if mode >= 2 else None, margin)
+
+
+def save_csv(sensors, kept):
     name = os.path.join(HERE, time.strftime("scan_%Y%m%d_%H%M%S.csv"))
     with open(name, "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["sensor", "serial", "angle_deg", "dist_mm", "quality", "x_m", "y_m"])
+        w.writerow(["sensor", "serial", "angle_deg", "dist_mm", "quality",
+                    "x_m", "y_m", "on_carpet"])
         for s in sensors:
             scan, _h = s.snapshot()
-            for a, d, q in scan:
+            mask = kept.get(s.name)
+            for i, (a, d, q) in enumerate(scan):
                 x, y = s.to_world(a, d)
+                on = "" if mask is None or i >= len(mask) else int(bool(mask[i]))
                 w.writerow([s.name, s.serial or "", f"{a:.2f}", f"{d:.1f}", q,
-                            f"{x:.4f}", f"{y:.4f}"])
+                            f"{x:.4f}", f"{y:.4f}", on])
     return f"saved {os.path.basename(name)}"
 
 
@@ -208,6 +249,30 @@ def draw_rings(surf, view, font):
         surf.blit(font.render(f"{r} m", True, RING), (centre[0] + 4, centre[1] - px - 16))
 
 
+def draw_carpet(surf, view, corners, sensors, mode, fov):
+    """The carpet outline, and the edges of each sensor's wedge."""
+    if mode >= 1 and len(sensors) >= 2:
+        reach = float(np.hypot(*(corners[2] - corners[0]))) if corners is not None else 2.0
+        for n, s in enumerate(sensors):
+            facing = facing_point(sensors, n)
+            if facing is None:
+                continue
+            here = np.asarray(s.offset[:2], dtype=float)
+            look = facing - here
+            if np.hypot(*look) < 1e-6:
+                continue
+            look = look / np.hypot(*look)
+            for sign in (-1, 1):
+                t = math.radians(sign * fov / 2.0)
+                c, sn = math.cos(t), math.sin(t)
+                edge = here + np.array([look[0] * c - look[1] * sn,
+                                        look[0] * sn + look[1] * c]) * reach
+                pygame.draw.line(surf, WEDGE, view.to_screen(*here),
+                                 view.to_screen(*edge), 1)
+    if mode >= 2 and corners is not None:
+        pygame.draw.lines(surf, CARPET, True, [view.to_screen(*c) for c in corners], 2)
+
+
 def draw_grid(surf, view, tile_m):
     half_w = (WIDTH / 2) / view.scale
     half_h = (HEIGHT / 2) / view.scale
@@ -229,6 +294,12 @@ def main():
     p.add_argument("--baud", type=int, default=lidar_io.BAUD)
     p.add_argument("--persist", action="store_true", help="start with trails on")
     p.add_argument("--tile", type=float, default=0.5, help="grid square size in metres")
+    p.add_argument("--fov", type=float, default=145.0,
+                   help="how wide each sensor looks, facing the other one (degrees)")
+    p.add_argument("--margin", type=float, default=0.20,
+                   help="how far past the carpet edge to still keep points (metres)")
+    p.add_argument("--crop", action="store_true",
+                   help="start with the carpet crop on (V cycles it anyway)")
     p.add_argument("--seconds", type=float, help="auto-quit after N seconds (testing)")
     p.add_argument("--shot", help="save a screenshot on quit (testing)")
     args = p.parse_args()
@@ -254,6 +325,8 @@ def main():
     picked = 0 if len(sensors) == 1 else 1     # the one the arrows move
     persist = args.persist
     show_grid = False
+    crop = 2 if args.crop else 0      # 0 off, 1 wedge, 2 wedge + carpet square
+    kept_points = {}
     note_box = [""]          # a list so the calibrate thread can write to it
     loaded = False
     dragging = False
@@ -306,7 +379,9 @@ def main():
                 elif k == pygame.K_l:
                     note_box[0] = load_alignment(sensors)
                 elif k == pygame.K_c:
-                    note_box[0] = save_csv(sensors)
+                    note_box[0] = save_csv(sensors, kept_points)
+                elif k == pygame.K_v:
+                    crop = (crop + 1) % 3
                 elif k == pygame.K_p:
                     persist = not persist
                 elif k == pygame.K_g:
@@ -324,19 +399,37 @@ def main():
             draw_grid(screen, view, args.tile)
         draw_rings(screen, view, font)
 
-        for s in sensors:
+        corners = carpet_corners(sensors) if crop >= 2 else None
+        draw_carpet(screen, view, corners, sensors, crop, args.fov)
+
+        kept_now, seen_now = 0, 0
+        for n, s in enumerate(sensors):
             scan, history = s.snapshot()
             if persist:
                 for old in history:
-                    for a, d, _q in old:
-                        x, y = s.to_world(a, d)
+                    old_world = align.transform(align.polar_to_local(old), *s.offset)
+                    old_keep = keep_mask(s, old_world, sensors, n, crop,
+                                         args.fov, args.margin, corners)
+                    for (x, y), ok in zip(old_world, old_keep):
+                        if not ok:
+                            continue
                         px, py = view.to_screen(x, y)
                         if 0 <= px < WIDTH and 0 <= py < HEIGHT:
                             screen.set_at((px, py), s.trail_colour)
-            for a, d, q in scan:
+
+            world = align.transform(align.polar_to_local(scan), *s.offset)
+            keep = keep_mask(s, world, sensors, n, crop, args.fov, args.margin, corners)
+            kept_points[s.name] = keep
+            kept_now += int(keep.sum())
+            seen_now += len(scan)
+
+            for (a, d, q), (x, y), ok in zip(scan, world, keep):
+                if not ok:
+                    pygame.draw.circle(screen, DROPPED, view.to_screen(x, y), 1)
+                    continue
                 f = 0.35 + 0.65 * min(q, 50) / 50.0
-                colour = tuple(int(c * f) for c in s.colour)
-                pygame.draw.circle(screen, colour, view.to_screen(*s.to_world(a, d)), 2)
+                pygame.draw.circle(screen, tuple(int(c * f) for c in s.colour),
+                                   view.to_screen(x, y), 2)
 
             # the sensor itself, and which way its 0 degrees points
             centre = view.to_screen(s.offset[0], s.offset[1])
@@ -361,6 +454,19 @@ def main():
             lines.append((f"    {len(scan):4d} points   {s.rate:4.1f} rot/s   "
                           f"x {s.offset[0]:+.2f} y {s.offset[1]:+.2f} turn {s.offset[2]:+6.1f}", DIM))
 
+        mode_text = ("off", f"wedge {args.fov:.0f} deg",
+                     f"wedge {args.fov:.0f} deg + square")[crop]
+        lines.append(("", DIM))
+        lines.append((f"carpet crop    {mode_text}", CARPET if crop else DIM))
+        if crop:
+            if corners is not None:
+                extra = f"carpet side {area.square_side(corners):.2f} m"
+            elif crop >= 2:
+                extra = "no square yet - line the sensors up first"
+            else:
+                extra = ""
+            lines.append((f"kept {kept_now} of {seen_now} points   {extra}", DIM))
+
         live = [s for s in sensors if s.rotations and not s.error]
         if not live:
             head, colour = "waiting for the sensors...", WARN
@@ -377,8 +483,8 @@ def main():
         for n, (text, c) in enumerate(lines):
             screen.blit(font.render(text[:74], True, c), (24, 56 + n * 24))
 
-        help_text = ("TAB pick  arrows move  < > turn  K auto-align  0 reset  S save  "
-                     "L load  C csv  P trails  G grid  R view  ESC quit")
+        help_text = ("TAB pick  arrows move  < > turn  K align  V carpet  0 reset  "
+                     "S save  L load  C csv  P trails  G grid  R view  ESC quit")
         hint = font.render(help_text, True, DIM)
         screen.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 26))
 
