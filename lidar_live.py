@@ -9,6 +9,11 @@
 # until the walls from both sensors sit on top of each other. Press S to save,
 # and it comes back next time (remembered per sensor serial number).
 #
+# T follows a person: the point midway between their two legs (see tracker.py).
+# Press B first, with the carpet empty, to learn the scenery - then anything
+# nearer than the scenery is a person. It works whether the sensors are low
+# enough to see shoes or high enough to see shins.
+#
 # V crops to the carpet: the two sensors sit at opposite ends of its diagonal,
 # so each one only looks through a wedge facing the other (145 degrees by
 # default), and anything outside the square those two corners make is dropped.
@@ -23,6 +28,7 @@
 #        S save alignment    L reload it
 #        drag / wheel to pan and zoom   R reset view
 #        V carpet crop: off / wedge / wedge + square
+#        B learn the empty carpet   T follow a person
 #        P trails   G 500mm grid   C save a CSV of what's on screen   ESC quit
 #        hold SHIFT for bigger steps
 
@@ -43,6 +49,7 @@ import numpy as np
 import align
 import area
 import lidar_io
+import tracker as person
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ALIGN_FILE = os.path.join(HERE, "lidar_align.json")
@@ -59,6 +66,9 @@ PICKED = (255, 255, 255)
 CARPET = (110, 215, 170)
 WEDGE = (55, 95, 80)
 DROPPED = (46, 50, 60)
+LEG = (235, 225, 120)
+MIDPOINT = (245, 90, 160)
+STALE = (150, 110, 140)
 
 # one colour per sensor: points, and a dimmer version for trails
 COLOURS = [
@@ -273,6 +283,25 @@ def draw_carpet(surf, view, corners, sensors, mode, fov):
         pygame.draw.lines(surf, CARPET, True, [view.to_screen(*c) for c in corners], 2)
 
 
+def draw_person(surf, view, font, tracked):
+    """The legs it found, and the point midway between them."""
+    for blob in tracked.blobs:
+        pygame.draw.circle(surf, LEG, view.to_screen(*blob.centre),
+                           max(4, int(blob.size / 2 * view.scale)), 1)
+    if tracked.position is None:
+        return
+    solid = tracked.confident
+    colour = MIDPOINT if solid else STALE
+    if tracked.legs is not None and solid:
+        pygame.draw.line(surf, colour, view.to_screen(*tracked.legs[0]),
+                         view.to_screen(*tracked.legs[1]), 1)
+    middle = view.to_screen(*tracked.position)
+    pygame.draw.circle(surf, (0, 0, 0), (middle[0] + 2, middle[1] + 2), 9)
+    pygame.draw.circle(surf, colour, middle, 9, 0 if solid else 2)
+    label = f"{tracked.position[0]:+.2f}, {tracked.position[1]:+.2f} m"
+    surf.blit(font.render(label, True, colour), (middle[0] + 14, middle[1] - 8))
+
+
 def draw_grid(surf, view, tile_m):
     half_w = (WIDTH / 2) / view.scale
     half_h = (HEIGHT / 2) / view.scale
@@ -298,6 +327,10 @@ def main():
                    help="how wide each sensor looks, facing the other one (degrees)")
     p.add_argument("--margin", type=float, default=0.20,
                    help="how far past the carpet edge to still keep points (metres)")
+    p.add_argument("--track", action="store_true",
+                   help="start following a person (T toggles it anyway)")
+    p.add_argument("--learn", type=float, default=3.0,
+                   help="seconds of empty carpet to learn when B is pressed")
     p.add_argument("--crop", action="store_true",
                    help="start with the carpet crop on (V cycles it anyway)")
     p.add_argument("--seconds", type=float, help="auto-quit after N seconds (testing)")
@@ -327,6 +360,12 @@ def main():
     show_grid = False
     crop = 2 if args.crop else 0      # 0 off, 1 wedge, 2 wedge + carpet square
     kept_points = {}
+    background = person.Background()
+    tracked = person.Tracker()
+    tracking = args.track
+    learning_until = None
+    learned_at = {}
+    tracked_rotations = {}
     note_box = [""]          # a list so the calibrate thread can write to it
     loaded = False
     dragging = False
@@ -382,6 +421,15 @@ def main():
                     note_box[0] = save_csv(sensors, kept_points)
                 elif k == pygame.K_v:
                     crop = (crop + 1) % 3
+                elif k == pygame.K_b:
+                    background = person.Background()
+                    learned_at = {}
+                    learning_until = time.time() + args.learn
+                    note_box[0] = "learning the empty carpet - stay off it"
+                elif k == pygame.K_t:
+                    tracking = not tracking
+                    if not tracking:
+                        tracked.reset()
                 elif k == pygame.K_p:
                     persist = not persist
                 elif k == pygame.K_g:
@@ -403,6 +451,8 @@ def main():
         draw_carpet(screen, view, corners, sensors, crop, args.fov)
 
         kept_now, seen_now = 0, 0
+        people_points = []
+        fresh_scan = False
         for n, s in enumerate(sensors):
             scan, history = s.snapshot()
             if persist:
@@ -422,6 +472,20 @@ def main():
             kept_points[s.name] = keep
             kept_now += int(keep.sum())
             seen_now += len(scan)
+
+            if learning_until is not None and s.rotations != learned_at.get(s.name):
+                learned_at[s.name] = s.rotations
+                background.add(s.name, scan)
+
+            if s.rotations != tracked_rotations.get(s.name):
+                tracked_rotations[s.name] = s.rotations
+                fresh_scan = True
+
+            if tracking and len(scan):
+                # a person is anything nearer than the scenery we learned
+                fresh = background.foreground(s.name, scan) & keep
+                if fresh.any():
+                    people_points.append(world[fresh])
 
             for (a, d, q), (x, y), ok in zip(scan, world, keep):
                 if not ok:
@@ -454,6 +518,20 @@ def main():
             lines.append((f"    {len(scan):4d} points   {s.rate:4.1f} rot/s   "
                           f"x {s.offset[0]:+.2f} y {s.offset[1]:+.2f} turn {s.offset[2]:+6.1f}", DIM))
 
+        if learning_until is not None and time.time() >= learning_until:
+            learning_until = None
+            note_box[0] = (f"learned the empty carpet from {background.rotations} rotations"
+                           if background.finish() else "nothing to learn from - no data")
+
+        if tracking:
+            # one update per fresh rotation; in between, just let the clock run
+            if fresh_scan:
+                merged = np.vstack(people_points) if people_points else np.zeros((0, 2))
+                tracked.update(time.time(), person.find_blobs(merged))
+            else:
+                tracked.tick(time.time())
+            draw_person(screen, view, font, tracked)
+
         mode_text = ("off", f"wedge {args.fov:.0f} deg",
                      f"wedge {args.fov:.0f} deg + square")[crop]
         lines.append(("", DIM))
@@ -466,6 +544,22 @@ def main():
             else:
                 extra = ""
             lines.append((f"kept {kept_now} of {seen_now} points   {extra}", DIM))
+
+        lines.append(("", DIM))
+        if learning_until is not None:
+            left = max(0.0, learning_until - time.time())
+            lines.append((f"learning the empty carpet... {left:.1f}s - keep off it", WARN))
+        elif not tracking:
+            lines.append(("person         off   (T to follow, B to learn the carpet first)", DIM))
+        else:
+            where = ("--" if tracked.position is None else
+                     f"{tracked.position[0]:+.2f}, {tracked.position[1]:+.2f} m")
+            colour = MIDPOINT if tracked.confident else STALE
+            lines.append((f"person         {tracked.state:14s} {where}", colour))
+            seen_ago = "" if tracked.age == 0 else f"   last seen {tracked.age:.1f}s ago"
+            lines.append((f"legs found {len(tracked.blobs)}"
+                          + ("" if background.ready else "   (no carpet learned yet)")
+                          + seen_ago, DIM))
 
         live = [s for s in sensors if s.rotations and not s.error]
         if not live:
@@ -483,8 +577,8 @@ def main():
         for n, (text, c) in enumerate(lines):
             screen.blit(font.render(text[:74], True, c), (24, 56 + n * 24))
 
-        help_text = ("TAB pick  arrows move  < > turn  K align  V carpet  0 reset  "
-                     "S save  L load  C csv  P trails  G grid  R view  ESC quit")
+        help_text = ("TAB pick  arrows  < > turn  K align  V carpet  B learn  T person  "
+                     "0 reset  S save  L load  C csv  P trails  G grid  ESC quit")
         hint = font.render(help_text, True, DIM)
         screen.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 26))
 
