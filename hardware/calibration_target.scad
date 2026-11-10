@@ -52,10 +52,14 @@ wall_t       = 2.5;    // cradle wall
 wall_h       = 8.0;    // how far the cradle comes up the case
 side_gap     = 30.0;   // opening in each side, for the cable
 
+/* [Riser - 0 for the flat version] */
+riser_h      = 0;      // how far off the floor to lift the sensor
+riser_wall   = 3.0;
+riser_slot   = 14.0;   // a way down the back for the cable
+
 /* [Posts] */
 post_offset  = 80.0;   // post centre to spin axis
 post_d       = 25.0;   // thick enough to catch a laser hit across the room
-post_h       = 120.0;  // tall enough for a 1.5 degree tilt over 3.4 m
 post_wall    = 2.5;
 skirt_h      = 6.0;
 skirt_flare  = 8.0;
@@ -75,7 +79,27 @@ screw_clear  = 2.8;
 screw_cbore  = 5.6;
 screw_cdepth = 1.8;
 
+/* [How tall the posts have to be] */
+laser_z      = 29.8;   // where the beam leaves the sensor, above its own base
+tilt_deg     = 1.5;    // SLAMTEC's scan field flatness, worst case
+reach_m      = 3.4;    // how far apart the sensors are, in metres
+
 $fn = 72;
+
+// The posts have to cross the other sensor's beam, and that beam is only
+// promised level to within tilt_deg. Over reach_m it can have drifted this far
+// up or down, so the post has to be tall enough to still be in its way.
+drift    = reach_m * 1000 * tan(tilt_deg);
+deck_z   = riser_h;              // underside of the plate the sensor sits on
+base_z   = riser_h + floor_t;    // the sensor's own base, i.e. its zero
+post_top = base_z + laser_z + drift + 4;
+post_h   = post_top - floor_t;
+
+// With the sensor on the floor a downward tilt is self-limiting - the beam
+// hits the carpet after about a metre and never arrives - so only the upward
+// case sets the height. Lift the sensor and the downward case starts to
+// matter too, but the post already runs all the way to the ground, so it is
+// covered either way.
 
 // The footprint as SLAMTEC draws it: a square of half-width 17.8 grown by a
 // 10 mm radius. Both numbers come straight out of the STEP model.
@@ -91,12 +115,34 @@ module plate() {
     linear_extrude(floor_t) footprint(fit + wall_t);
 }
 
+module riser() {
+    // A hollow plinth under the sensor. Open underneath, so the four screws
+    // can still be reached from inside, and slotted down the back so the
+    // cable has a way out other than over the lip.
+    if (riser_h > 0) difference() {
+        linear_extrude(riser_h + floor_t)
+            difference() {
+                footprint(fit + wall_t);
+                footprint(fit + wall_t - riser_wall);
+            }
+        // the deck itself, so the inside stays hollow
+        translate([0, 0, -1])
+            linear_extrude(riser_h + 1)
+                footprint(fit + wall_t - riser_wall);
+        // cable slot, opposite the arrow
+        translate([0, -outer_half, -1])
+            cube([riser_slot, 4 * riser_wall, 2 * riser_h], center = true);
+    }
+    if (riser_h > 0)
+        translate([0, 0, riser_h]) linear_extrude(floor_t) footprint(fit + wall_t);
+}
+
 module cradle() {
     // A full ring, then most of each side cut away. What survives is four
     // corner cradles sitting on the arcs, which is where the case is roundest
     // and so where it locates best.
     difference() {
-        translate([0, 0, floor_t])
+        translate([0, 0, deck_z + floor_t])
             linear_extrude(wall_h)
                 difference() {
                     footprint(fit + wall_t);
@@ -104,7 +150,7 @@ module cradle() {
                 }
         for (a = [0, 90, 180, 270])
             rotate([0, 0, a])
-                translate([0, outer_half, floor_t - 1])
+                translate([0, outer_half, deck_z + floor_t - 1])
                     cube([side_gap, 4 * wall_t, wall_h + 2], center = true);
     }
 }
@@ -143,18 +189,18 @@ module arrow_tab() {
     // nothing to mistake and nothing that disappears at a glance. Aim it at
     // the other sensor and the posts land at +/-90 degrees, clear of the
     // 145 degree wedge the sensor is actually watching.
-    translate([0, outer_half - 6, 0])
+    translate([0, outer_half - 6, deck_z])
         linear_extrude(floor_t)
             polygon([[-tab_w / 2, 0], [tab_w / 2, 0], [0, tab_len + 6]]);
     // a raised spine as well, so it reads by touch in a dim room
-    translate([0, outer_half - 4, floor_t - 0.01])
+    translate([0, outer_half - 4, deck_z + floor_t - 0.01])
         linear_extrude(arrow_rise)
             polygon([[-tab_w / 2 + 5, 0], [tab_w / 2 - 5, 0], [0, tab_len]]);
 }
 
 module screw_holes() {
     for (x = [-screw_pitch, screw_pitch], y = [-screw_pitch, screw_pitch])
-        translate([x, y, 0]) {
+        translate([x, y, deck_z]) {
             translate([0, 0, -1]) cylinder(d = screw_clear, h = floor_t + 2);
             translate([0, 0, -0.01]) cylinder(d = screw_cbore, h = screw_cdepth);
         }
@@ -164,6 +210,7 @@ module calibration_target() {
     difference() {
         union() {
             plate();
+            riser();
             cradle();
             arrow_tab();
             for (s = [-1, 1]) { arm(s); post(s); }
@@ -179,9 +226,9 @@ if (show_sensor) sensor_ghost();
 
 // What it has to fit around, for looking at on screen only.
 module sensor_ghost() {
-    %union() {
+    %translate([0, 0, deck_z + floor_t]) union() {
         linear_extrude(23.1) footprint();
         translate([0, 0, 23.1]) cylinder(d = 48.6, h = 41.3 - 23.1);
-        translate([0, 0, 29.8 - 0.5]) cylinder(d = 56, h = 1);   // the laser plane
+        translate([0, 0, laser_z - 0.5]) cylinder(d = 56, h = 1);  // the laser plane
     }
 }

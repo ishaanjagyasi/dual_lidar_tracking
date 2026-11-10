@@ -9,8 +9,11 @@ the thirty seconds `calibrate_pair.py` takes, then take them off.
 | | |
 |---|---|
 | `calibration_target.scad` | the source, parametric |
-| `calibration_target.stl` | ready to slice |
-| 193 x 83 x 123 mm | fits a 220 mm bed with room to spare |
+| `calibration_target.stl` | sensor on the floor. 193 x 83 x 126 mm |
+| `calibration_target_raised80.stl` | same, on an 80 mm plinth. 193 x 83 x 206 mm |
+
+Both fit a 220 mm bed. Print **two of whichever one you pick** - the pair has
+to match, or the two sensors end up scanning at different heights.
 
 ## Why posts, and why two
 
@@ -51,6 +54,38 @@ Only an upward tilt matters. A plane tilted *down* by 1.5 degrees hits the
 floor after 1.14 m and never reaches the other sensor at all.
 
 If your sensors sit further apart than about 3.5 m, raise `post_h` to match.
+
+## Raising the sensor
+
+![the raised version](raised.png)
+
+`riser_h` puts the sensor on a hollow plinth. At 80 mm it scans at 113 mm
+instead of 33 mm - lower shin rather than shoe - which keeps a walking leg in
+the scan slice more of the time, so the tracker sees two legs more often
+instead of one.
+
+It cannot block the sensor, and that is checked rather than assumed: the
+plinth is directly underneath, 30 mm below the beam and no wider than the case,
+so at the laser plane the only things in the way are the two posts - 40 degrees
+of the full circle, none of it inside the +/-72.5 degree wedge the sensor
+watches.
+
+The plinth is open underneath, so the four screws can still be reached, and
+slotted down the back so the cable has a way out other than over the lip.
+
+**The posts grow with it**, which is why the raised version is 206 mm tall and
+not 126. The height is derived, not typed in:
+
+```
+post top  =  sensor base  +  29.8 mm  +  reach x tan(tilt)  +  4 mm
+```
+
+With the sensor on the floor only an upward tilt counts - a downward one hits
+the carpet after about a metre and never arrives. Lift it and the downward case
+starts to matter too, but the posts run to the ground anyway, so both are
+covered. Change `riser_h` and the posts follow; if you want it taller than the
+printer's Z height allows, drop `tilt_deg` to 1.0 and know that you are
+trading the datasheet's worst case for 60 mm of print.
 
 ## Printing
 
@@ -102,7 +137,8 @@ Everything is parametric at the top of the `.scad`. The two that matter:
 | | |
 |---|---|
 | `post_offset` | 80 mm. **Change this and change `JIG_SPAN_M` in `calibrate_pair.py` to match** — it is `2 x post_offset`, in metres. |
-| `post_h` | 120 mm. See the rule above. |
+| `riser_h` | 0 mm. How far off the floor to lift the sensor. The posts grow to match. |
+| `tilt_deg`, `reach_m` | 1.5 deg and 3.4 m - the worst-case scan tilt and how far apart your sensors are. These two set the post height. |
 
 `post_offset` cannot shrink much. The posts have to stand clear of the sensor's
 own case or the two merge into one blob and the pair is lost: at 80 mm there is
@@ -111,5 +147,6 @@ about 40 mm of daylight between a post and the corner of the case, against the
 
 ```bash
 openscad -o calibration_target.stl calibration_target.scad
+openscad -o raised.stl -D riser_h=80 calibration_target.scad
 openscad -o fitted.png -D show_sensor=true calibration_target.scad   # with the C1 in place
 ```

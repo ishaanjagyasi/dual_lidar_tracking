@@ -83,6 +83,11 @@ nothing can sit on the axis, since that is where the sensor is, but the
 midpoint of a pair straddling it is the axis exactly, however the jig is
 turned. [hardware/README.md](hardware/README.md) has the rest.
 
+There is a raised version too - `riser_h` stands the sensor on a plinth, 80 mm
+in the STL provided, so it scans at shin height rather than shoe height and
+sees a walking leg more of the time. The plinth sits under the sensor and
+below the beam, so it blocks nothing; the posts grow to match.
+
 Without a jig it falls back to single clumps, so a drinks can standing against
 each sensor still works (`--no-jig`); it is just less accurate, because one
 lone marker cannot sit on the axis. Either way, stand clear - a person in the
