@@ -67,13 +67,26 @@ outright: A measured the direction and distance to B, and B measured the
 direction back, which is how far B is turned. Three unknowns, three
 measurements, no searching and nothing to get stuck in.
 
-First, give each sensor a marker. The laser window sits near the top of the
-unit, so a bare C1 is a 55 mm box that the other one's beam may skim straight
-over. Stand something upright and matte against each one - a drinks can, a
-bottle, a cardboard tube, 5-10 cm across - as near the middle of the unit as it
-will go, tall enough to cross the height the other sensor scans at. Wider is
-better: more laser hits, easier to pick out across the room. Then stand clear,
-because a person in the room is one more marker-shaped thing.
+First, print the jig in [hardware/](hardware/) - one per sensor - drop it over
+each unit and point its arrow at the other sensor. It stands two 25 mm posts
+120 mm tall, 160 mm apart, one either side of the spin axis.
+
+![the jig with a C1 sitting in it](hardware/fitted.png)
+
+It has to be posts beside the sensor rather than something on top of it,
+because SLAMTEC's own numbers rule a hat out. The laser sits at 29.8 mm and the
+case is 41.3 mm tall, so the beam leaves 11.5 mm *below* the top and anything
+resting up there is invisible. And the scan plane is only promised level to
+within 1.5 degrees, which across 3.4 m of carpet is 89 mm of drift, so a short
+marker at exactly 29.8 mm can be missed entirely. Two posts also beat one:
+nothing can sit on the axis, since that is where the sensor is, but the
+midpoint of a pair straddling it is the axis exactly, however the jig is
+turned. [hardware/README.md](hardware/README.md) has the rest.
+
+Without a jig it falls back to single clumps, so a drinks can standing against
+each sensor still works (`--no-jig`); it is just less accurate, because one
+lone marker cannot sit on the axis. Either way, stand clear - a person in the
+room is one more marker-shaped thing.
 
 It reads one sensor at a time (everything being measured is standing still, so
 the two scans needn't be simultaneous) and stacks about two seconds of
@@ -82,18 +95,20 @@ one hit every 4 cm at 3 m, so a can gets two. The sensor doesn't land on the
 same angles each time round, so twenty rotations give twenty times the detail.
 
 ```
-  A saw B at    37.55deg   3.253 m  (8 cm across, 33 points)
-  B saw A at    17.57deg   3.252 m  (8 cm across, 33 points)
-  the two measured the gap between them as 3.295 m and 3.291 m - 4 mm apart
-  so B is at (+2.007, +2.611) m, turned -160.02deg
-  the rooms then line up to 7 mm off the walls, 3530 points matched (90%)
-  ICP nudged it 13 mm and 0.02deg against the walls
-  final: (+2.000, +2.600) m, turned -160.00deg
+  matching on the jig's two posts: 2 for A, 1 for B, 2 pairing(s) tried
+    A saw B at    37.56deg   3.270 m  (jig, posts 160 mm apart, 26 points)
+    B saw A at    17.58deg   3.267 m  (jig, posts 158 mm apart, 22 points)
+    the two measured the gap between them as 3.288 m and 3.284 m - 4 mm apart
+    so B is at (+2.003, +2.605) m, turned -160.02deg
+    the rooms then line up to 5 mm off the walls, 3533 points matched (90%)
+  final: (+2.003, +2.605) m, turned -160.02deg
 ```
 
-It can't tell a marker from the furniture, so it doesn't try. It gathers every
-small isolated clump both sensors can see and tests each pairing against two
-things that only the right pairing can satisfy:
+It can't tell a marker from the furniture, so it doesn't try - and it doesn't
+simply trust the jig either, because a room can easily throw up two odds and
+ends 160 mm apart. The jig is tried first and single clumps second, and
+whatever is proposed has to survive two checks that only the right pairing
+can:
 
 - **both sides must agree on the gap.** A and B are measuring the same distance
   between the two of them, so two readings of one number that must match - a
@@ -190,6 +205,7 @@ python3 lidar_plot.py walk.csv                       # top-down picture
 | `lidar_io.py` | opening, reading and closing a sensor |
 | `align.py` | automatic alignment between sensors (ICP) |
 | `calibrate_pair.py` | calibration by letting the sensors see each other |
+| `hardware/` | the 3D-printable calibration jig, and how to print it |
 | `area.py` | the wedge and carpet-square filters |
 | `tracker.py` | background, blobs, and following a person |
 | `lidar_live.py` | the live view |
@@ -216,16 +232,20 @@ in the starting guess, and refusing (rather than guessing) when the guess is 90
 degrees out or the room is a bare corridor.
 
 `test_calibrate_pair.py` ray-casts an L-shaped room with a marker at each
-sensor and checks the mutual sighting recovers the second sensor's place:
-within 7 mm and a hundredth of a degree on a clean room, and under 5 cm with
-10 mm of noise, dropping to a couple of millimetres once ICP has polished it.
+sensor and checks the mutual sighting recovers the second sensor's place.
+With the printed jig - two posts and the sensor's own case between them, all
+cast properly - it comes out **4 mm** on a clean room and 14 mm with 10 mm of
+noise. With a single can instead: 7 mm clean, under 5 cm noisy, dropping to a
+couple of millimetres once ICP has polished it.
 The room is L-shaped on purpose - a plain square has four-fold symmetry, so an
 answer turned 90 degrees would overlap just as well and nothing could tell them
 apart. It also checks the awkward cases: a bin left standing in the room, no
 markers at all, a decoy at exactly the distance that would fool the agreement
-check, and the second sensor being in another room entirely. The rule it holds
-to is that a wrong answer is never returned quietly - it is either right or it
-refuses and says why.
+check, and the second sensor being in another room entirely. For the jig: two
+bins left standing exactly 160 mm apart, and a jig turned a quarter turn out so
+one post hides behind the other - which it spots, refuses, and names the right
+sensor to go and turn. The rule it holds to throughout is that a wrong answer
+is never returned quietly: it is either right, or it refuses and says why.
 
 Worth knowing from writing those tests: a far corner seen edge-on also reads as
 a small isolated clump, because the wall running away from the sensor is

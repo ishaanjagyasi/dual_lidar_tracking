@@ -31,25 +31,38 @@
 #
 # BEFORE YOU RUN IT
 #
-# Each sensor needs to be visible to the other, at exactly the height the other
-# one scans at - which is the laser window near the top of the unit, not the
-# top of the case. A bare C1 is a 55 mm box, and the other one's beam may skim
-# over it or hit its own window and come back as nothing.
+# Each sensor needs something the other can measure, and it has to sit on that
+# sensor's spin axis, because that is the point being located. Two things make
+# that awkward, both out of SLAMTEC's own datasheet:
 #
-# So give each sensor a marker: a drinks can, a bottle, a cardboard tube,
-# anything upright, matte and 5-10 cm across. Stand it against the side of the
-# housing, as close to the middle of the unit as it will go, tall enough that
-# it clearly spans the height the other sensor scans at. Wider is better: it
-# gets more laser hits, so it is easier to pick out across the room.
+#   the laser sits at 29.8 mm, 11.5 mm BELOW the top of the 41.3 mm case, so a
+#   marker resting on top of a sensor is above the beam and invisible; and
 #
-# Then stand clear. The room must be still - a person standing in it is another
-# marker-shaped thing for this to consider.
+#   the scan plane is only promised to be level to within 1.5 degrees, which
+#   over 3.4 m of carpet is 89 mm of drift up or down, so a short marker at
+#   exactly 29.8 mm may be missed completely.
+#
+# Hence hardware/calibration_target.scad: a jig that drops around the sensor
+# and stands two 25 mm posts 120 mm tall, one each side of the spin axis,
+# 160 mm apart. Nothing can sit on the axis - that is where the sensor is - but
+# the midpoint of two posts straddling it is the axis exactly, whichever way
+# round the jig is turned. Print one per sensor, aim the arrows at each other,
+# run this, take them off again.
+#
+# Without a jig it will fall back to single clumps, so a drinks can or a bottle
+# standing against each sensor still works; it is just less accurate, because
+# one lone marker cannot sit on the axis and is off by however far it misses.
+#
+# Either way, stand clear. The room must be still - a person standing in it is
+# another marker-shaped thing for this to consider.
 #
 #
 # HOW IT TELLS A MARKER FROM THE FURNITURE
 #
-# It doesn't, on its own. It gathers every small isolated clump either sensor
-# can see and tries each pairing, then keeps the one that actually works:
+# It doesn't, on its own, and it does not simply trust the jig either: a room
+# can easily throw up two odds and ends 160 mm apart. So the jig is tried
+# first, single clumps second, and whatever is proposed has to survive the
+# same two checks:
 #
 #   both sides must agree on the gap   A and B measure the same distance
 #                                      between the two of them. Two readings of
@@ -80,13 +93,30 @@ import tracker as person
 HERE = os.path.dirname(os.path.abspath(__file__))
 ALIGN_FILE = os.path.join(HERE, "lidar_align.json")   # same file the live view uses
 
+# the printed jig in hardware/calibration_target.scad
+JIG_SPAN_M = 0.160            # between the two posts' centres (2 x 80 mm)
+JIG_SPAN_TOL_M = 0.030        # how far the measured span may be out
+JIG_POST_M = 0.025            # post diameter
+JIG_POST_TOL_M = 0.030        # the two posts must measure alike
+JIG_POST_MAX_M = 0.100        # and neither may be furniture-sized
+
 # picking markers out of a scan
 MIN_SEP_M = 0.30              # closer than this and it isn't the other sensor
 MAX_SEP_M = 12.0              # the C1's range
-MARKER_EPS_M = 0.08           # points this close together are the same object
+MARKER_EPS_M = 0.03           # points this close together are the same object.
+                              # Small, because the jig's posts stand only 40 mm
+                              # clear of the sensor's own case and a wider
+                              # reach would swallow all three into one clump.
 MIN_MARKER_POINTS = 4
 MAX_MARKER_WIDTH_M = 0.30     # wider than this is furniture or a wall
-RING_CLEAR_M = 0.20           # a marker has empty space around it
+RING_CLEAR_M = 0.08           # a lone marker has empty space around it. The
+                              # jig's posts do not - the sensor's own case is
+                              # only about 45 mm away - so this is applied when
+                              # looking for single clumps and skipped when
+                              # looking for the jig, whose two-post geometry
+                              # is a far better filter anyway.
+MAX_BLOBS = 150               # how many clumps to consider at all
+MAX_CANDIDATES = 40           # don't try every pairing in a cluttered room
 
 # judging a pairing
 DIST_TOL_M = 0.15             # how far the two measured gaps may disagree
@@ -147,20 +177,31 @@ def thin(points):
 
 @dataclass
 class Sighting:
-    """One small isolated thing a sensor can see."""
+    """Something one sensor can see that might be the other sensor.
+
+    Either a single clump - a drinks can, say - or, better, the printed jig's
+    two posts, in which case bearing and distance are of the point midway
+    between them, which is the other sensor's spin axis exactly.
+    """
     bearing: float      # degrees, the sensor's own
     distance: float     # metres to its near face
     width: float        # metres across, as measured
     points: int
+    kind: str = "clump"     # "jig" once the two posts have been recognised
+    span: float = None      # the measured gap between those posts
 
     def centre_distance(self, radius=None):
         """Distance to the middle of it. The laser stops at the near surface,
-        so the middle is half a width further out."""
+        so the middle is half a width further out. For the jig that correction
+        is the same: both posts are measured on their near faces, so the point
+        midway between them is short by half a post as well."""
         return self.distance + (self.width / 2.0 if radius is None else radius)
 
     def __str__(self):
+        what = (f"jig, posts {self.span*1000:.0f} mm apart" if self.kind == "jig"
+                else f"{self.width*100:.0f} cm across")
         return (f"{self.bearing:7.2f}deg  {self.distance:6.3f} m  "
-                f"({self.width*100:.0f} cm across, {self.points} points)")
+                f"({what}, {self.points} points)")
 
 
 def clusters(points, eps=MARKER_EPS_M, min_points=MIN_MARKER_POINTS):
@@ -189,8 +230,13 @@ def clusters(points, eps=MARKER_EPS_M, min_points=MIN_MARKER_POINTS):
     return out
 
 
-def find_markers(scan, min_sep=None, max_sep=None):
-    """Every small isolated clump in one sensor's scan, nearest first."""
+def candidate_blobs(scan, min_sep=None, max_sep=None, clear=RING_CLEAR_M):
+    """Every small clump in one sensor's scan, nearest first.
+
+    `clear` is how much empty space a clump must have around it. Zero turns
+    that test off, which is what the jig needs: its posts stand close to the
+    sensor's own case and would be thrown out.
+    """
     min_sep = MIN_SEP_M if min_sep is None else min_sep
     max_sep = MAX_SEP_M if max_sep is None else max_sep
     local = align.polar_to_local(scan)
@@ -212,15 +258,63 @@ def find_markers(scan, min_sep=None, max_sep=None):
             continue
         # every point of the blob is within size/2 of its middle, so anything
         # else inside this ball is a neighbour that shouldn't be there
-        reach = blob.size / 2.0 + RING_CLEAR_M
-        nearby = int(tree.query_ball_point(blob.centre, reach, return_length=True))
-        if nearby > blob.count:
-            continue
-        found.append(Sighting(bearing_of(blob.centre),
-                              float(np.hypot(*blob.centre)),
-                              float(blob.size), int(blob.count)))
+        if clear > 0:
+            reach = blob.size / 2.0 + clear
+            nearby = int(tree.query_ball_point(blob.centre, reach,
+                                               return_length=True))
+            if nearby > blob.count:
+                continue
+        found.append(blob)
+    found.sort(key=lambda b: float(np.hypot(*b.centre)))
+    return found[:MAX_BLOBS]
+
+
+def _sighting(centre, width, points, kind="clump", span=None):
+    return Sighting(bearing_of(centre), float(np.hypot(*centre)),
+                    float(width), int(points), kind, span)
+
+
+def find_markers(scan, min_sep=None, max_sep=None):
+    """Each clump on its own - a drinks can, or a single post. Nearest first."""
+    return [_sighting(b.centre, b.size, b.count)
+            for b in candidate_blobs(scan, min_sep, max_sep)][:MAX_CANDIDATES]
+
+
+def find_jigs(scan, span=JIG_SPAN_M, tol=JIG_SPAN_TOL_M,
+              min_sep=None, max_sep=None):
+    """The printed jig: two posts a known distance apart, straddling the
+    sensor's spin axis.
+
+    Nothing can sit on the axis itself - that is where the sensor is - so the
+    jig puts a post either side of it, exactly opposite. The midpoint of the
+    two is the axis, whichever way the jig is turned, and the distance between
+    them is fixed by the print, so it is a signature almost nothing else in a
+    room has. The sensor's own case sits between the posts and may well show up
+    as a third clump; it is simply ignored.
+
+    Returns a Sighting per pair, at the midpoint, nearest first.
+    """
+    blobs = candidate_blobs(scan, min_sep, max_sep, clear=0.0)
+    found = []
+    for i in range(len(blobs)):
+        for j in range(i + 1, len(blobs)):
+            a, b = blobs[i], blobs[j]
+            gap = float(np.hypot(*(a.centre - b.centre)))
+            if abs(gap - span) > tol:
+                continue
+            # The posts are two identical prints at nearly the same range, so
+            # they should measure nearly the same. Two unrelated bits of room
+            # furniture that happen to be the right distance apart usually
+            # don't, and this is the cheapest way to say so.
+            if abs(a.size - b.size) > JIG_POST_TOL_M:
+                continue
+            if max(a.size, b.size) > JIG_POST_MAX_M:
+                continue
+            found.append(_sighting((a.centre + b.centre) / 2.0,
+                                   (a.size + b.size) / 2.0,
+                                   a.count + b.count, "jig", gap))
     found.sort(key=lambda s: s.distance)
-    return found
+    return found[:MAX_CANDIDATES]
 
 
 # ---------------------------------------------------------------------- scoring
@@ -283,43 +377,33 @@ class Result:
         return "\n".join(self.lines)
 
 
-def calibrate_pair(scan_a, scan_b, anchor=(0.0, 0.0, 0.0), marker_radius=None,
-                   min_sep=None, max_sep=None):
-    """Work out where sensor B is, given both sensors' scans.
+def _with_hint(result, jigs_a, jigs_b):
+    """One sensor showing the jig's pair and the other not is worth saying out
+    loud: it means the jig the blind one is looking at is a quarter turn out,
+    so its two posts line up one behind the other and only the near one comes
+    back.
 
-    scan_a, scan_b  [(angle_deg, dist_mm, quality)] from each sensor
-    anchor          (x, y, turn_deg) of sensor A on the shared map
-    marker_radius   metres, if you know how fat the markers are; by default
-                    half the width each sensor actually measured is used
-    min_sep,        how far apart the sensors could possibly be, in metres
-    max_sep
-
-    Returns a Result. result.pose is None when the answer can't be trusted,
-    and result.lines always says why.
+    Note which sensor that is. A sees B's jig, so an empty jigs_a means B's jig
+    is the one at fault - the sensor that CAN see a pair is the one whose own
+    jig needs turning, because the other one is looking straight at it.
     """
-    markers_a = tuple(find_markers(scan_a, min_sep, max_sep))
-    markers_b = tuple(find_markers(scan_b, min_sep, max_sep))
+    if bool(jigs_a) == bool(jigs_b):
+        return result
+    at_fault = "A" if jigs_a else "B"       # this one's own jig is edge-on
+    blind = "B" if jigs_a else "A"
+    return Result(result.pose, result.lines + (
+        f"  Sensor {at_fault} can see a pair of posts; sensor {blind} cannot.",
+        f"  So it is sensor {at_fault}'s OWN jig that is turned a quarter turn out:",
+        f"  {blind} is looking straight at it and sees one post hiding behind the",
+        f"  other. Turn sensor {at_fault}, or just its jig, so the arrow points at "
+        f"sensor {blind}.",
+    ), result.best, result.rivals, result.markers_a, result.markers_b, result.tried)
 
-    if not markers_a or not markers_b:
-        blind = [n for n, found in (("A", markers_a), ("B", markers_b)) if not found]
-        who = ("neither sensor" if len(blind) == 2 else f"sensor {blind[0]}")
-        return Result(
-            markers_a=markers_a, markers_b=markers_b,
-            lines=(
-                f"{who} could not see anything marker-shaped.",
-                "Each one needs an upright marker 5-10 cm across standing against",
-                "it, tall enough to cross the height the other sensor scans at.",
-                "A bare C1 is a 55 mm box and the other one's beam goes over it.",
-            ))
 
-    target = world_cloud(scan_a, anchor)
-    tree = cKDTree(target)
-    normals = align.wall_directions(target, tree)
-    local_b = thin(align.polar_to_local(scan_b))
-    if normals is None or len(local_b) < align.MIN_PAIRS:
-        return Result(markers_a=markers_a, markers_b=markers_b,
-                      lines=("not enough points yet - let both sensors spin a moment",))
-
+def _solve(markers_a, markers_b, anchor, marker_radius, how,
+           target, tree, normals, local_b):
+    """Try every pairing of what A can see against what B can see, and keep
+    the one that survives both checks. Returns a Result."""
     candidates, tried = [], 0
     for sa in markers_a:
         for sb in markers_b:
@@ -338,7 +422,7 @@ def calibrate_pair(scan_a, scan_b, anchor=(0.0, 0.0, 0.0), marker_radius=None,
             candidates.append(Candidate(pose, separation, disagreement,
                                         wall, matched, fraction, sa, sb))
 
-    head = (f"{len(markers_a)} marker(s) for A, {len(markers_b)} for B, "
+    head = (f"matching on {how}: {len(markers_a)} for A, {len(markers_b)} for B, "
             f"{tried} pairing(s) tried")
 
     if not candidates:
@@ -397,6 +481,72 @@ def calibrate_pair(scan_a, scan_b, anchor=(0.0, 0.0, 0.0), marker_radius=None,
         return Result(None, tuple(lines), best, rivals, markers_a, markers_b, tried)
 
     return Result(best.pose, tuple(lines), best, rivals, markers_a, markers_b, tried)
+
+
+def calibrate_pair(scan_a, scan_b, anchor=(0.0, 0.0, 0.0), marker_radius=None,
+                   min_sep=None, max_sep=None, span=JIG_SPAN_M):
+    """Work out where sensor B is, given both sensors' scans.
+
+    scan_a, scan_b  [(angle_deg, dist_mm, quality)] from each sensor
+    anchor          (x, y, turn_deg) of sensor A on the shared map
+    marker_radius   metres, if you know how fat the markers are; by default
+                    half the width each sensor actually measured is used
+    min_sep,        how far apart the sensors could possibly be, in metres
+    max_sep
+    span            the printed jig's post spacing. None skips looking for it
+                    and matches single clumps instead - a drinks can, say.
+
+    The jig is tried first and single clumps are the fallback, but the jig is
+    not simply believed: a room can easily throw up two odds and ends the right
+    distance apart, so a jig answer still has to pass the same two checks as
+    any other, and if it doesn't the clumps get their turn.
+
+    Returns a Result. result.pose is None when the answer can't be trusted,
+    and result.lines always says why.
+    """
+    target = world_cloud(scan_a, anchor)
+    tree = cKDTree(target)
+    normals = align.wall_directions(target, tree)
+    local_b = thin(align.polar_to_local(scan_b))
+    if normals is None or len(local_b) < align.MIN_PAIRS:
+        return Result(lines=("not enough points yet - let both sensors spin a moment",))
+
+    tries = []
+    jigs_a = jigs_b = ()
+    if span:
+        jigs_a = tuple(find_jigs(scan_a, span, JIG_SPAN_TOL_M, min_sep, max_sep))
+        jigs_b = tuple(find_jigs(scan_b, span, JIG_SPAN_TOL_M, min_sep, max_sep))
+        tries.append(("the jig's two posts", jigs_a, jigs_b))
+    tries.append(("single clumps",
+                  tuple(find_markers(scan_a, min_sep, max_sep)),
+                  tuple(find_markers(scan_b, min_sep, max_sep))))
+
+    first_failure = None
+    for how, markers_a, markers_b in tries:
+        if not markers_a or not markers_b:
+            continue
+        result = _solve(markers_a, markers_b, anchor, marker_radius, how,
+                        target, tree, normals, local_b)
+        if result.ok:
+            return result
+        if first_failure is None:
+            first_failure = result
+    if first_failure is not None:
+        return _with_hint(first_failure, jigs_a, jigs_b)
+
+    markers_a = tries[-1][1]
+    markers_b = tries[-1][2]
+    blind = [n for n, found in (("A", markers_a), ("B", markers_b)) if not found]
+    who = ("neither sensor" if len(blind) == 2 else f"sensor {blind[0]}")
+    return Result(
+        markers_a=markers_a, markers_b=markers_b,
+        lines=(
+            f"{who} could not see anything marker-shaped.",
+            "Each sensor needs the printed jig around it (see hardware/), or",
+            "failing that something upright 5-10 cm across standing against it,",
+            "tall enough to cross the height the other sensor scans at.",
+            "A bare C1 is a 55 mm box and the other one's beam goes over it.",
+        ))
 
 
 def polish(scan_b, scan_a, anchor, pose):
@@ -480,6 +630,12 @@ def main():
     p.add_argument("--baud", type=int, default=lidar_io.BAUD)
     p.add_argument("--rotations", type=int, default=CAPTURE_ROTATIONS,
                    help=f"rotations to stack per sensor (default {CAPTURE_ROTATIONS})")
+    p.add_argument("--span", type=float, default=JIG_SPAN_M, metavar="M",
+                   help="the printed jig's post spacing in metres "
+                        f"(default {JIG_SPAN_M})")
+    p.add_argument("--no-jig", action="store_true",
+                   help="don't look for the jig; match single clumps, so a "
+                        "drinks can against each sensor will do")
     p.add_argument("--marker-radius", type=float, metavar="M",
                    help="how fat the markers are, in metres, if you know "
                         "(default: half the width each sensor measured)")
@@ -499,8 +655,13 @@ def main():
         print("need two lidars plugged in; found: " + (", ".join(ports) or "none"))
         return 1
 
-    print("Stand clear - the room has to be still. Each sensor needs an upright")
-    print("marker 5-10 cm across against it, crossing the height the other scans at.\n")
+    print("Stand clear - the room has to be still.")
+    if args.no_jig:
+        print("Each sensor needs something upright 5-10 cm across standing against "
+              "it,\nand tall enough to cross the height the other sensor scans at.\n")
+    else:
+        print("Each sensor needs its printed jig on (see hardware/), with the arrow\n"
+              "pointing at the other sensor so the posts stand out to the sides.\n")
 
     scans, serials = [], []
     for port in ports:
@@ -530,7 +691,8 @@ def main():
         name = chr(ord("A") + n)
         print(f"\nsensor {n + 1} ({name}, {ports[n]}):")
         result = calibrate_pair(scans[0], scans[n], anchor, args.marker_radius,
-                                min_sep, max_sep)
+                                min_sep, max_sep,
+                                span=None if args.no_jig else args.span)
         print("  " + result.report().replace("\n", "\n  "))
         if not result.ok:
             failed = True

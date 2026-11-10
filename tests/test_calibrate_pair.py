@@ -26,6 +26,12 @@ A_POSE = (0.0, 0.0, 0.0)            # the anchor
 B_POSE = (2.0, 2.6, 200.0)          # what the calibration has to find
 MARKER_R = 0.033                    # a drinks can
 
+# the printed jig: two 25 mm posts, 80 mm each side of the spin axis, and the
+# sensor's own 55.6 mm case sitting between them
+JIG_ARM = 0.080
+POST_R = 0.0125
+CASE_R = 0.0278
+
 STEP_DEG = 0.72                     # the C1's angular resolution at 10 Hz
 ROTATIONS = 20
 
@@ -107,6 +113,33 @@ def fake_scan(pose, markers, rotations=ROTATIONS, step=STEP_DEG, seed=1,
                 out.append((bearing % 360.0, best * 1000.0, 47))
             bearing += step
     return out
+
+
+def jig(pose, facing, arm=JIG_ARM, post_r=POST_R, case=True):
+    """The printed jig on a sensor at `pose`, posts at right angles to
+    `facing` - which is how it is meant to be aimed. The sensor's own case
+    goes in too, because it really is there, in the middle, between them."""
+    ax, ay = pose[0], pose[1]
+    angle = math.atan2(facing[0] - ax, facing[1] - ay)      # clockwise from +y
+    # perpendicular to that, in both directions
+    px, py = math.cos(angle), -math.sin(angle)
+    out = [((ax + arm * px, ay + arm * py), post_r),
+           ((ax - arm * px, ay - arm * py), post_r)]
+    if case:
+        out.append(((ax, ay), CASE_R))
+    return out
+
+
+def jig_scans(aim_a=None, aim_b=None, extra=(), noise_m=0.0, case=True):
+    """Both sensors wearing the jig. aim_* overrides where each jig points,
+    for testing one that has been turned the wrong way."""
+    aim_a = (B_POSE[0], B_POSE[1]) if aim_a is None else aim_a
+    aim_b = (A_POSE[0], A_POSE[1]) if aim_b is None else aim_b
+    on_a = jig(A_POSE, aim_a, case=case)
+    on_b = jig(B_POSE, aim_b, case=case)
+    extra = list(extra)
+    return (fake_scan(A_POSE, on_b + extra, seed=1, noise_m=noise_m),
+            fake_scan(B_POSE, on_a + extra, seed=2, noise_m=noise_m))
 
 
 def scans(extra=(), markers=True, noise_m=0.0):
@@ -308,6 +341,84 @@ def test_rival_answers_are_called_out():
           len(rivals) == 1, f"{len(rivals)} rivals")
 
 
+def test_jig_is_recognised():
+    print("\nthe printed jig: two posts either side of the spin axis")
+    scan_a, scan_b = jig_scans()
+    found = cal.find_jigs(scan_a)
+    check("A finds the pair", len(found) >= 1, f"{found}")
+    if found:
+        truth = math.hypot(B_POSE[0], B_POSE[1])
+        best = min(found, key=lambda s: abs(s.centre_distance() - truth))
+        print(f"    span measured {best.span*1000:.0f} mm "
+              f"(printed {cal.JIG_SPAN_M*1000:.0f}), "
+              f"midpoint {best.centre_distance():.3f} m (true {truth:.3f})")
+        check("the span matches the print",
+              abs(best.span - cal.JIG_SPAN_M) < cal.JIG_SPAN_TOL_M,
+              f"{best.span*1000:.0f} mm")
+        check("the midpoint lands on the spin axis",
+              abs(best.centre_distance() - truth) < 0.015,
+              f"{(best.centre_distance()-truth)*1000:+.0f} mm out")
+    check("the case between the posts is not mistaken for the pair",
+          all(abs(s.span - cal.JIG_SPAN_M) < cal.JIG_SPAN_TOL_M for s in found))
+
+
+def test_jig_recovers_the_pose():
+    print("\nthe whole thing, both sensors wearing the jig")
+    for noise in (0.0, 0.010):
+        scan_a, scan_b = jig_scans(noise_m=noise)
+        result = cal.calibrate_pair(scan_a, scan_b, A_POSE)
+        label = f"with {noise*1000:.0f} mm noise"
+        check(f"it trusts the answer, {label}", result.ok, result.report())
+        if not result.ok:
+            print("    " + result.report().replace("\n", "\n    "))
+            continue
+        off, spin = error(result.pose)
+        check(f"matched on the jig, {label}",
+              result.best.seen_by_a.kind == "jig", result.report())
+        check(f"within 3 cm, {label}", off < 0.03, f"{off*1000:.0f} mm out")
+        check(f"within 1.5 degrees, {label}", spin < 1.5, f"{spin:.2f} deg out")
+        print(f"    {label}: {off*1000:.0f} mm, {spin:.2f} deg out")
+
+
+def test_jig_turned_the_wrong_way():
+    """Aimed 90 degrees out, one post hides behind the other and the pair is
+    gone. It must not quietly use the near post on its own, which sits 80 mm
+    off the axis."""
+    print("\nwith one jig turned a quarter turn the wrong way")
+    sideways = (B_POSE[0] + 3.0, B_POSE[1] - 3.0)    # posts now in line with A
+    scan_a, scan_b = jig_scans(aim_b=sideways)
+    result = cal.calibrate_pair(scan_a, scan_b, A_POSE)
+    print("    " + result.report().replace("\n", "\n    "))
+    if result.ok:
+        off, spin = error(result.pose)
+        print(f"    answered anyway: {off*1000:.0f} mm, {spin:.2f} deg out")
+        check("if it answers, it is still close enough for ICP to finish",
+              off < 0.10, f"{off*1000:.0f} mm out")
+    else:
+        check("it refuses rather than using one post as if it were the middle",
+              True)
+        # B's jig is the one turned wrong, so A is the sensor that cannot see a
+        # pair and B is the one to go and turn.
+        text = result.report()
+        check("it names B's jig as the one to turn, not A's",
+              "sensor B's OWN jig" in text and "sensor A can see a pair" not in text,
+              text)
+
+
+def test_jig_beats_a_decoy_pair():
+    print("\nwith two bins left standing the same distance apart as the posts")
+    decoys = [((1.10, 0.95), 0.05), ((1.10 + cal.JIG_SPAN_M, 0.95), 0.05)]
+    scan_a, scan_b = jig_scans(extra=decoys)
+    result = cal.calibrate_pair(scan_a, scan_b, A_POSE)
+    check("it still trusts the answer", result.ok, result.report())
+    if result.ok:
+        off, spin = error(result.pose)
+        check("and still gets it right", off < 0.04 and spin < 1.5,
+              f"{off*1000:.0f} mm, {spin:.2f} deg out")
+        print(f"    {len(result.markers_a)} pair(s) for A, "
+              f"{len(result.markers_b)} for B; {off*1000:.0f} mm out")
+
+
 def test_polish_keeps_it_close():
     print("\nhanding the answer to ICP to polish")
     scan_a, scan_b = scans(noise_m=0.010)
@@ -355,6 +466,10 @@ if __name__ == "__main__":
     test_refuses_a_lying_pairing()
     test_refuses_when_the_rooms_disagree()
     test_rival_answers_are_called_out()
+    test_jig_is_recognised()
+    test_jig_recovers_the_pose()
+    test_jig_turned_the_wrong_way()
+    test_jig_beats_a_decoy_pair()
     test_polish_keeps_it_close()
     test_saves_what_the_live_view_reads()
     print(f"\n{passed} passed, {failed} failed")
