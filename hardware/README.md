@@ -100,7 +100,11 @@ trading the datasheet's worst case for 60 mm of print.
 Any light, matte filament — PLA or PETG is fine. **Pale is better than black:**
 the C1 works at 905 nm and comes back more strongly off a light surface.
 
-- No supports. Every overhang is a cone or a chamfer.
+- No supports. The only thing printed over air is the deck of the raised
+  version, which bridges 56 mm across the hollow plinth - routine, and its top
+  face (the one the sensor sits on) comes out flat because it is printed last.
+  Each post has a disc foot that reaches the bed, and the arrow is down at
+  floor level rather than up at deck level, so neither is a cantilever.
 - 0.2 mm layers, 3 perimeters, 15% infill.
 - Flat on the bed, posts upright, exactly as the STL sits.
 - The posts are hollow and are most of the print. If print time matters, cut
@@ -116,7 +120,8 @@ the C1 works at 905 nm and comes back more strongly off a light surface.
 2. Optional: four **M2.5 x 5 mm** cap screws from underneath, into the
    sensor's own tapped holes. The counterbores keep the heads flush. It works
    without them — this is only if you want it rigid.
-3. **Point the arrow at the other sensor.** That puts the posts out at
+3. **Point the arrow at the other sensor** - it is the pointed tab at floor
+   level. That puts the posts out at
    +/-90 degrees, which is outside the 145 degree wedge the sensors actually
    watch, so they block nothing that matters. A square carpet corner is only
    90 degrees wide, so there is room to spare.

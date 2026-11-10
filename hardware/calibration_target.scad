@@ -183,6 +183,12 @@ module arm(sign) {
 }
 
 module post(sign) {
+    // The foot has to reach the bed. The arm is only arm_w wide and stops at
+    // the post's centre, so without this the flared skirt starts at floor_t
+    // with nothing under most of it - it prints into thin air.
+    translate([sign * post_offset, 0, 0])
+        cylinder(d = post_d + skirt_flare, h = floor_t);
+
     translate([sign * post_offset, 0, floor_t]) {
         difference() {
             union() {
@@ -199,14 +205,18 @@ module post(sign) {
 
 module arrow_tab() {
     // The tab is the arrow: a point, not a mark printed on a tab, so there is
-    // nothing to mistake and nothing that disappears at a glance. Aim it at
+    // nothing to mistake and nothing that disappears at a glance. It lives at
+    // the bottom, on the bed, not up at deck level - on the raised version a
+    // tongue sticking out at 80 mm would be a 21 mm cantilever over fresh air,
+    // and the whole jig is rigid, so an arrow down here points exactly where
+    // one up there would. Aim it at
     // the other sensor and the posts land at +/-90 degrees, clear of the
     // 145 degree wedge the sensor is actually watching.
-    translate([0, outer_half - 6, deck_z])
+    translate([0, outer_half - 6, 0])
         linear_extrude(floor_t)
             polygon([[-tab_w / 2, 0], [tab_w / 2, 0], [0, tab_len + 6]]);
     // a raised spine as well, so it reads by touch in a dim room
-    translate([0, outer_half - 4, deck_z + floor_t - 0.01])
+    translate([0, outer_half - 4, floor_t - 0.01])
         linear_extrude(arrow_rise)
             polygon([[-tab_w / 2 + 5, 0], [tab_w / 2 - 5, 0], [0, tab_len]]);
 }
