@@ -70,8 +70,16 @@ so at the laser plane the only things in the way are the two posts - 40 degrees
 of the full circle, none of it inside the +/-72.5 degree wedge the sensor
 watches.
 
-The plinth is open underneath, so the four screws can still be reached, and
-slotted down the back so the cable has a way out other than over the lip.
+**Getting at the screws, and getting the cable out.** The plinth is a ring at
+the floor, four corner legs, and the deck on top - not a closed box. The middle
+of the base is open all the way through, so you reach straight up to the four
+screw heads from underneath, and there is a 26 mm window front and back running
+the full height for the cable and for a driver coming in sideways.
+
+![looking up inside the plinth](raised_underside.png)
+
+Easiest order: stand it upside down, drop the four screws down through the
+deck, turn it over, sit the sensor on them and tighten.
 
 **The posts grow with it**, which is why the raised version is 206 mm tall and
 not 126. The height is derived, not typed in:

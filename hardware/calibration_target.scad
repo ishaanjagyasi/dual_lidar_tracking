@@ -55,7 +55,7 @@ side_gap     = 30.0;   // opening in each side, for the cable
 /* [Riser - 0 for the flat version] */
 riser_h      = 0;      // how far off the floor to lift the sensor
 riser_wall   = 3.0;
-riser_slot   = 14.0;   // a way down the back for the cable
+riser_gap    = 26.0;   // windows front and back: cable out, screwdriver in
 
 /* [Posts] */
 post_offset  = 80.0;   // post centre to spin axis
@@ -112,30 +112,43 @@ module footprint(extra = 0) {
 outer_half = sensor_half + fit + wall_t;
 
 module plate() {
-    linear_extrude(floor_t) footprint(fit + wall_t);
-}
-
-module riser() {
-    // A hollow plinth under the sensor. Open underneath, so the four screws
-    // can still be reached from inside, and slotted down the back so the
-    // cable has a way out other than over the lip.
-    if (riser_h > 0) difference() {
-        linear_extrude(riser_h + floor_t)
+    // On the floor this is a solid plate. On a plinth it becomes a ring, or
+    // it would seal the bottom of the tube and put the four screw heads
+    // somewhere no screwdriver can reach.
+    linear_extrude(floor_t)
+        if (riser_h > 0)
             difference() {
                 footprint(fit + wall_t);
                 footprint(fit + wall_t - riser_wall);
             }
-        // the deck itself, so the inside stays hollow
-        translate([0, 0, -1])
-            linear_extrude(riser_h + 1)
-                footprint(fit + wall_t - riser_wall);
-        // cable slot, opposite the arrow
-        translate([0, -outer_half, -1])
-            cube([riser_slot, 4 * riser_wall, 2 * riser_h], center = true);
-    }
-    if (riser_h > 0)
-        translate([0, 0, riser_h]) linear_extrude(floor_t) footprint(fit + wall_t);
+        else
+            footprint(fit + wall_t);
 }
+
+module riser() if (riser_h > 0) {
+    // A plinth with a window front and back, running the full height from the
+    // base ring right up to the underside of the deck. The windows are how the
+    // cable gets out and how a screwdriver gets in; the bottom is open too, so
+    // the four screws can be reached from directly below as well. What is left
+    // carries the load: a continuous ring at the floor, the four corners all
+    // the way up, and the deck across the top.
+    difference() {
+        translate([0, 0, floor_t])
+            linear_extrude(riser_h - floor_t)
+                difference() {
+                    footprint(fit + wall_t);
+                    footprint(fit + wall_t - riser_wall);
+                }
+        for (a = [0, 180])
+            rotate([0, 0, a])
+                translate([0, outer_half, (riser_h + floor_t) / 2])
+                    cube([riser_gap, 4 * riser_wall, riser_h + 2], center = true);
+    }
+
+    // the deck the sensor stands on
+    translate([0, 0, riser_h]) linear_extrude(floor_t) footprint(fit + wall_t);
+}
+
 
 module cradle() {
     // A full ring, then most of each side cut away. What survives is four
