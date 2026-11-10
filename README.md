@@ -55,6 +55,64 @@ number, so it survives the ports swapping around.
 
 ## Lining the sensors up
 
+### Let them see each other (`calibrate_pair.py`)
+
+```bash
+python3 calibrate_pair.py
+```
+
+The sensors are objects sitting in each other's view. If both are at the same
+height, A sees B and B sees A, and that one mutual sighting gives the answer
+outright: A measured the direction and distance to B, and B measured the
+direction back, which is how far B is turned. Three unknowns, three
+measurements, no searching and nothing to get stuck in.
+
+First, give each sensor a marker. The laser window sits near the top of the
+unit, so a bare C1 is a 55 mm box that the other one's beam may skim straight
+over. Stand something upright and matte against each one - a drinks can, a
+bottle, a cardboard tube, 5-10 cm across - as near the middle of the unit as it
+will go, tall enough to cross the height the other sensor scans at. Wider is
+better: more laser hits, easier to pick out across the room. Then stand clear,
+because a person in the room is one more marker-shaped thing.
+
+It reads one sensor at a time (everything being measured is standing still, so
+the two scans needn't be simultaneous) and stacks about two seconds of
+rotations each. Stacking matters: a single rotation puts readings 0.8° apart,
+one hit every 4 cm at 3 m, so a can gets two. The sensor doesn't land on the
+same angles each time round, so twenty rotations give twenty times the detail.
+
+```
+  A saw B at    37.55deg   3.253 m  (8 cm across, 33 points)
+  B saw A at    17.57deg   3.252 m  (8 cm across, 33 points)
+  the two measured the gap between them as 3.295 m and 3.291 m - 4 mm apart
+  so B is at (+2.007, +2.611) m, turned -160.02deg
+  the rooms then line up to 7 mm off the walls, 3530 points matched (90%)
+  ICP nudged it 13 mm and 0.02deg against the walls
+  final: (+2.000, +2.600) m, turned -160.00deg
+```
+
+It can't tell a marker from the furniture, so it doesn't try. It gathers every
+small isolated clump both sensors can see and tests each pairing against two
+things that only the right pairing can satisfy:
+
+- **both sides must agree on the gap.** A and B are measuring the same distance
+  between the two of them, so two readings of one number that must match - a
+  free check costing nothing.
+- **the rooms must line up.** With the right pairing B's whole scan lands on
+  A's walls; with a wrong one it lands nowhere near.
+
+If two different pairings both pass, it says so and refuses to save rather than
+pick one. That usually means something marker-shaped is still in the room.
+
+It then hands its answer to ICP to polish, because a sighting can't win the
+last couple of centimetres: a lidar measures the near *surface* of a marker and
+a marker is never exactly on the spin axis. The sighting gets ICP into the
+right basin; ICP squeezes out the rest against the walls. `--no-polish` shows
+the raw sighting. The result goes into the same `lidar_align.json` the live
+view reads, keyed by serial number, after asking first.
+
+### Or by eye, then `K`
+
 Nudge one roughly into place by eye, clear people out of the area, then press
 `K`. It matches the shapes both sensors can see (ICP - iterative closest
 point), and reports how well it did:
@@ -130,13 +188,15 @@ python3 lidar_plot.py walk.csv                       # top-down picture
 | | |
 |---|---|
 | `lidar_io.py` | opening, reading and closing a sensor |
-| `align.py` | automatic alignment between sensors |
+| `align.py` | automatic alignment between sensors (ICP) |
+| `calibrate_pair.py` | calibration by letting the sensors see each other |
 | `area.py` | the wedge and carpet-square filters |
 | `tracker.py` | background, blobs, and following a person |
 | `lidar_live.py` | the live view |
 | `lidar_dump.py` | record to CSV |
 | `lidar_plot.py` | draw a recorded CSV |
 | `tests/test_align.py` | alignment checked against known answers |
+| `tests/test_calibrate_pair.py` | mutual sighting checked against a fake room |
 | `tests/test_area.py` | carpet filter checked against known geometry |
 | `tests/test_tracker.py` | tracking checked against a made-up walk |
 
@@ -144,6 +204,7 @@ python3 lidar_plot.py walk.csv                       # top-down picture
 
 ```bash
 python3 tests/test_align.py
+python3 tests/test_calibrate_pair.py
 python3 tests/test_area.py
 python3 tests/test_tracker.py
 ```
@@ -153,6 +214,23 @@ alignment recovers it: within about a millimetre and a few hundredths of a
 degree in a normal room, still working with 10 mm of noise or a 35-degree error
 in the starting guess, and refusing (rather than guessing) when the guess is 90
 degrees out or the room is a bare corridor.
+
+`test_calibrate_pair.py` ray-casts an L-shaped room with a marker at each
+sensor and checks the mutual sighting recovers the second sensor's place:
+within 7 mm and a hundredth of a degree on a clean room, and under 5 cm with
+10 mm of noise, dropping to a couple of millimetres once ICP has polished it.
+The room is L-shaped on purpose - a plain square has four-fold symmetry, so an
+answer turned 90 degrees would overlap just as well and nothing could tell them
+apart. It also checks the awkward cases: a bin left standing in the room, no
+markers at all, a decoy at exactly the distance that would fool the agreement
+check, and the second sensor being in another room entirely. The rule it holds
+to is that a wrong answer is never returned quietly - it is either right or it
+refuses and says why.
+
+Worth knowing from writing those tests: a far corner seen edge-on also reads as
+a small isolated clump, because the wall running away from the sensor is
+sampled too sparsely for its readings to join up. Finding candidates is
+deliberately permissive; the agreement and overlap checks are what judge them.
 
 `test_area.py` checks the carpet square comes out right for any size at any
 angle, that the 90-degree fact holds, and that a point just off the edge is
