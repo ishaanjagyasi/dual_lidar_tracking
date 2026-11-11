@@ -1,0 +1,43 @@
+{
+    "type": "process",
+    "name": "LiDAR jig @BBL X1C",
+    "print_settings_id": "LiDAR jig @BBL X1C",
+    "inherits": "0.28mm Extra Draft @BBL X1C",
+    "from": "User",
+    "version": "2.8.0.6",
+    "outer_wall_speed": [
+        "80",
+        "80"
+    ],
+    "inner_wall_speed": [
+        "90",
+        "90"
+    ],
+    "top_surface_speed": [
+        "80",
+        "80"
+    ],
+    "gap_infill_speed": [
+        "90",
+        "90"
+    ],
+    "sparse_infill_speed": [
+        "180",
+        "180"
+    ],
+    "internal_solid_infill_speed": [
+        "180",
+        "180"
+    ],
+    "sparse_infill_density": "10%",
+    "detect_thin_wall": "1",
+    "brim_type": "outer_only",
+    "brim_width": "5",
+    "enable_support": "0",
+    "compatible_printers": [
+        "Bambu Lab X1 Carbon 0.4 nozzle",
+        "Bambu Lab X1 0.4 nozzle",
+        "Bambu Lab P1S 0.4 nozzle",
+        "Bambu Lab X1E 0.4 nozzle"
+    ]
+}

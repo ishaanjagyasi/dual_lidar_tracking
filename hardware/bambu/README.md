@@ -1,9 +1,14 @@
-# Bambu Studio presets — A1, 0.4 nozzle
+# Bambu Studio presets — 0.4 nozzle, PLA
 
 | | |
 |---|---|
-| `LiDAR jig @BBL A1.json` | what to use |
-| `LiDAR jig + supports @BBL A1.json` | same, with supports on, if you want them |
+| `LiDAR jig @BBL A1.json` | A1 — what to use |
+| `LiDAR jig + supports @BBL A1.json` | A1, with supports on, if you want them |
+| `LiDAR jig @BBL X1C.json` | X1 Carbon — what to use |
+| `LiDAR jig + supports @BBL X1C.json` | X1 Carbon, with supports on |
+
+The X1C pair also covers the X1, X1E and P1S with a 0.4 nozzle. Any Generic
+PLA profile will do for filament.
 
 **Install:** Bambu Studio → *File → Import → Import Configs…* → pick the file.
 Then choose it in the Process dropdown. Or drop the file straight into
@@ -24,7 +29,7 @@ dwell doubles for free, and the time barely moves.
 
 You need two anyway.
 
-## Measured on your setup
+## Measured on the A1
 
 Sliced with the actual Bambu Studio CLI against your own printer and filament
 profiles, not guessed. Raised version, both copies on the plate:
@@ -42,6 +47,29 @@ which on a 25 mm tube 200 mm tall does not leave the layer time to go solid.
 This preset caps the walls at 80 mm/s to buy that back. The rest of it — 10%
 infill, thin-wall detection so the 2.5 mm post wall fills properly, a 5 mm brim
 because the thing is 206 mm tall — is small change by comparison.
+
+## On the X1 Carbon
+
+Same settings, inheriting `0.28mm Extra Draft @BBL X1C` instead. Two copies fit
+the 256 mm bed comfortably — one behind the other, not side by side — and the
+206 mm raised version clears the 250 mm height.
+
+**Open it up.** The X1C is enclosed, and that is the one thing that matters
+here. Posts this thin and this tall are cooling-limited, which is the whole
+reason for the 80 mm/s wall cap; printing PLA in a closed, heat-soaked chamber
+works against exactly that. Front door open, top glass off.
+
+Two honest caveats:
+
+- **The times below are the A1's.** I sliced those with Bambu Studio's own
+  command line. It refuses to load any X1-family machine profile on this
+  version — X1C, X1, X1E and P1S all fail the same way, while the A1 goes
+  through fine — so I could not measure the X1C and will not invent a number.
+  Expect it near the A1's: both cap PLA at the same 12 mm³/s, which is what
+  this print runs into, so the X1C's faster motion buys less than it looks.
+- The X1C schema carries one value per extruder variant, so the speeds in that
+  preset are pairs rather than single values. That is deliberate; don't
+  "tidy" them into one.
 
 ## About the supports
 
