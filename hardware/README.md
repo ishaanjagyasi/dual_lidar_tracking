@@ -110,7 +110,14 @@ the C1 works at 905 nm and comes back more strongly off a light surface.
 - The posts are hollow and are most of the print. If print time matters, cut
   `post_h` — read the rule above first and know what you are giving up.
 
-**Print two.**
+**Print two** - and print them on the same plate, together. The posts are thin
+tubes, so a layer of one is over in a blink; with two on the bed the nozzle
+walks off to the other part and gives the first one that long again to set.
+The cooling dwell doubles and the clock barely moves.
+
+Ready-made Bambu Studio presets for the A1 are in [bambu/](bambu/), with real
+sliced times: **4h 19m** for a pair of the flat version, **8h 17m** for a pair
+of the raised one.
 
 ## Fitting it
 
