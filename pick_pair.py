@@ -32,6 +32,10 @@
 #   SPACE    freeze / unfreeze          N          snapping on / off
 #   P        polish with ICP            S          save        ESC  quit
 #   wheel    zoom the panel under the mouse
+#
+# Dashed lines: every sensor sees its own two posts at about 65 mm, and the
+# arrow points at right angles to them. So the other sensor sits somewhere on
+# one of those two lines - which is where to look.
 
 import argparse
 import json
@@ -66,6 +70,7 @@ NEW = (150, 205, 240)
 PICK = (250, 95, 165)
 POST = (240, 225, 120)
 SENSOR = (95, 200, 255)
+GUIDE = (120, 95, 60)
 
 SNAP_M = 0.30
 STACK = 30            # rotations held on screen, about three seconds
@@ -110,6 +115,25 @@ class Reader(threading.Thread):
             return [p for t in self.turns for p in t], list(self.turns[-1])
 
 
+def arrow_axis(scan):
+    """Which way the jig's arrow points, from the sensor's own two posts.
+
+    Every sensor sees its own posts at about 65 mm. They stand at right angles
+    to the arrow, so the arrow - and with it the other sensor, if the arrows
+    are aimed at each other - lies along the line at right angles to them. That
+    is the line to look along. Returns both directions, since from here there
+    is no telling which end the arrow is on.
+    """
+    a = np.array([p[0] for p in scan]); d = np.array([p[1] for p in scan]) / 1000
+    own = a[(d > 0.03) & (d < 0.12)]
+    if len(own) < 6:
+        return []
+    r = np.radians(own)
+    # fold both posts onto one direction by doubling the angle
+    mean2 = math.degrees(math.atan2(np.sin(2 * r).mean(), np.cos(2 * r).mean())) / 2
+    return [(mean2 + 90) % 360, (mean2 - 90) % 360]
+
+
 class Panel:
     def __init__(self, name, rect, reader):
         self.name = name
@@ -125,6 +149,7 @@ class Panel:
         self.pick = None          # (x, y) metres, this sensor's own frame
         self.how = ""
         self.frozen = False
+        self.axis = []            # bearings the arrow could point along
         self._work = threading.Thread(target=self._find, daemon=True)
         self._stop = threading.Event()
         self._work.start()
@@ -138,6 +163,7 @@ class Panel:
                     blobs = cal.candidate_blobs(scan, clear=0.0)
                     jigs = cal.find_jigs(scan)
                     self.blobs, self.jigs = blobs, jigs
+                    self.axis = arrow_axis(scan)
                 except Exception:
                     pass
             time.sleep(REFRESH_S)
@@ -210,9 +236,11 @@ class Panel:
             return
         sx = (self.rect.w / 2 + pts[:, 0] * self.scale).astype(int)
         sy = (self.rect.h / 2 - pts[:, 1] * self.scale).astype(int)
-        keep = (sx >= 0) & (sx < self.rect.w) & (sy >= 0) & (sy < self.rect.h)
         arr = pygame.surfarray.pixels3d(self.surface)
-        arr[sx[keep], sy[keep]] = colour
+        for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):     # 2x2, so posts show
+            x, y = sx + dx, sy + dy
+            keep = (x >= 0) & (x < self.rect.w) & (y >= 0) & (y < self.rect.h)
+            arr[x[keep], y[keep]] = colour
         del arr
 
     def draw(self, screen, font, small):
@@ -225,6 +253,14 @@ class Panel:
             pygame.draw.circle(self.surface, RING, (cx, cy), rr, 1)
             self.surface.blit(small.render(f"{ring} m", True, (70, 78, 92)),
                               (cx + 4, cy - rr - 13))
+        for b in self.axis:
+            r = math.radians(b)
+            reach = max(self.rect.w, self.rect.h)
+            end = (int(cx + reach * math.sin(r)), int(cy - reach * math.cos(r)))
+            for k in range(0, reach, 14):           # dashed
+                p0 = (int(cx + k * math.sin(r)), int(cy - k * math.cos(r)))
+                p1 = (int(cx + (k + 7) * math.sin(r)), int(cy - (k + 7) * math.cos(r)))
+                pygame.draw.line(self.surface, GUIDE, p0, p1, 1)
         self._plot(self.local, OLD)
         self._plot(self.fresh, NEW)
 
@@ -381,8 +417,11 @@ def main():
             if saved:
                 lines.append((saved, OK))
         else:
-            lines = [("Click the other sensor in each panel. Yellow rings are "
-                      "pairs that look like a jig.", TEXT), (note, DIM)]
+            lines = [("Click the other sensor in each panel. It sits on one of the "
+                      "dashed lines - that is the arrow's direction, worked out "
+                      "from this sensor's own posts.", TEXT),
+                     ("Yellow rings are pairs that look like a jig.", DIM),
+                     (note, DIM)]
         for text, col in lines:
             screen.blit(font.render(text, True, col), (pad + 4, y))
             y += 23
