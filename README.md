@@ -131,6 +131,35 @@ right basin; ICP squeezes out the rest against the walls. `--no-polish` shows
 the raw sighting. The result goes into the same `lidar_align.json` the live
 view reads, keyed by serial number, after asking first.
 
+### Pointing at it yourself (`pick_pair.py`)
+
+```bash
+python3 pick_pair.py
+```
+
+Two panels, one per sensor, each showing what that sensor can see. Click where
+the **other** sensor is in each. Those are the same two sightings the automatic
+version works from, and everything after the click is identical.
+
+Clicking snaps to what is really there, and says which of three things it
+found: the jig's two posts (their midpoint is the other sensor's spin axis
+exactly - the best case), or one clump (pushed out by half its width, because
+the laser stops at the near face), or nothing, in which case your click is
+taken as-is and it tells you so. A sloppy click is never quietly treated as a
+precise one.
+
+The two distances are the check. A and B are measuring the same gap between
+them, so the numbers should match; if they differ by more than a few
+centimetres one of the clicks is on something else, and it says so in red.
+
+```
+click  pick        BACKSPACE clear      N snap on/off    R read again
+P      polish with ICP                  S save           wheel zoom
+```
+
+In a fake room, a click 150 mm off the real position still lands within 12 mm
+after snapping, giving a 10 mm answer - 1 mm once `P` has polished it.
+
 ### When it won't calibrate (`check_pair.py`)
 
 ```bash
@@ -230,6 +259,7 @@ python3 lidar_plot.py walk.csv                       # top-down picture
 | `align.py` | automatic alignment between sensors (ICP) |
 | `calibrate_pair.py` | calibration by letting the sensors see each other |
 | `check_pair.py` | why they cannot see each other, when they cannot |
+| `pick_pair.py` | calibrate by clicking on the other sensor yourself |
 | `hardware/` | the 3D-printable calibration jig, and how to print it |
 | `area.py` | the wedge and carpet-square filters |
 | `tracker.py` | background, blobs, and following a person |
