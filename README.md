@@ -137,9 +137,17 @@ view reads, keyed by serial number, after asking first.
 python3 pick_pair.py
 ```
 
-Two panels, one per sensor, each showing what that sensor can see. Click where
-the **other** sensor is in each. Those are the same two sightings the automatic
-version works from, and everything after the click is identical.
+Two panels, one per sensor, **both live**. Click where the **other** sensor is
+in each. Those are the same two sightings the automatic version works from, and
+everything after the click is identical.
+
+Because it is live you can **wave a hand next to one sensor and watch which
+blob moves** in the other's panel. That settles which thing is which in a
+couple of seconds, which is the whole reason for the live view. What you see is
+the last three seconds of rotations stacked together - one rotation alone puts
+readings 38 mm apart at 3 m and a 25 mm post would flicker in and out - with
+the newest rotation drawn brighter, so anything moving leaves a trail. `SPACE`
+freezes both panels when you want the picture to hold still while you click.
 
 Clicking snaps to what is really there, and says which of three things it
 found: the jig's two posts (their midpoint is the other sensor's spin axis
@@ -153,7 +161,7 @@ them, so the numbers should match; if they differ by more than a few
 centimetres one of the clicks is on something else, and it says so in red.
 
 ```
-click  pick        BACKSPACE clear      N snap on/off    R read again
+click  pick        BACKSPACE clear      SPACE freeze     N snap on/off
 P      polish with ICP                  S save           wheel zoom
 ```
 
