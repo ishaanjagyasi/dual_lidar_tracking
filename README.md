@@ -131,6 +131,25 @@ right basin; ICP squeezes out the rest against the walls. `--no-polish` shows
 the raw sighting. The result goes into the same `lidar_align.json` the live
 view reads, keyed by serial number, after asking first.
 
+### When it won't calibrate (`check_pair.py`)
+
+```bash
+python3 check_pair.py
+```
+
+`calibrate_pair.py` says when it fails but not always why, because by then it
+is reasoning about which marker is which. This looks further back and answers
+the two questions underneath: is each jig seated (every sensor should see its
+own two posts at about 65 mm, 180 degrees apart), and are both sensors in the
+same space at all.
+
+That second one is the useful part. Two scans of one room can be laid on top of
+each other; two scans of different rooms - or of one room split by a wall or a
+sofa - cannot. It searches every plausible place and heading for the second
+sensor and reports the best fit there is. A real match is a few millimetres off
+the walls with most of the scan matched. Anything else means no amount of
+turning jigs will help.
+
 ### Or by eye, then `K`
 
 Nudge one roughly into place by eye, clear people out of the area, then press
@@ -210,6 +229,7 @@ python3 lidar_plot.py walk.csv                       # top-down picture
 | `lidar_io.py` | opening, reading and closing a sensor |
 | `align.py` | automatic alignment between sensors (ICP) |
 | `calibrate_pair.py` | calibration by letting the sensors see each other |
+| `check_pair.py` | why they cannot see each other, when they cannot |
 | `hardware/` | the 3D-printable calibration jig, and how to print it |
 | `area.py` | the wedge and carpet-square filters |
 | `tracker.py` | background, blobs, and following a person |
