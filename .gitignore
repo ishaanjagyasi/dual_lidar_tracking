@@ -6,3 +6,4 @@ __pycache__/
 /*.csv
 /*.png
 /lidar_align.json
+/carpet_grid.json

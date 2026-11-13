@@ -30,6 +30,7 @@
 #        V carpet crop: off / wedge / wedge + square
 #        B learn the empty carpet   T follow a person
 #        P trails   G 500mm grid   C save a CSV of what's on screen   ESC quit
+#        O send the person to the Processing sketch   Y turn its grid   M mirror it
 #        hold SHIFT for bigger steps
 
 import argparse
@@ -48,11 +49,18 @@ import numpy as np
 
 import align
 import area
+import carpet_grid as cg
 import lidar_io
 import tracker as person
 
+try:
+    from pythonosc import udp_client
+except ImportError:          # only needed for sending to Processing
+    udp_client = None
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ALIGN_FILE = os.path.join(HERE, "lidar_align.json")
+GRID_FILE = os.path.join(HERE, "carpet_grid.json")
 
 WIDTH, HEIGHT = 1100, 850
 BG = (16, 18, 24)
@@ -68,6 +76,8 @@ WEDGE = (55, 95, 80)
 DROPPED = (46, 50, 60)
 LEG = (235, 225, 120)
 MIDPOINT = (245, 90, 160)
+TILE = (70, 120, 105)
+TILE_ORIGIN = (120, 210, 170)
 STALE = (150, 110, 140)
 
 # one colour per sensor: points, and a dimmer version for trails
@@ -199,6 +209,29 @@ def keep_mask(sensor, world, sensors, n, mode, fov, margin, corners):
         return np.ones(len(world), dtype=bool)
     return area.carpet_mask(world, sensor.offset[:2], facing, fov,
                             corners if mode >= 2 else None, margin)
+
+
+def draw_carpet_grid(screen, view, font, grid, here):
+    """The game's grid laid on the carpet, so it can be matched against the
+    Processing window: every tile labelled row,col, tile (0,0) picked out, and
+    the tile the person is on outlined."""
+    if grid is None:
+        return
+    for r in range(grid.rows):
+        for c in range(grid.cols):
+            poly = [view.to_screen(x, y) for x, y in grid.cell(r, c)]
+            pygame.draw.polygon(screen, TILE_ORIGIN if (r, c) == (0, 0) else TILE, poly, 1)
+            if grid.tile_m * view.scale > 30:
+                mid = view.to_screen(*grid.to_floor(c + 0.5, r + 0.5))
+                label = font.render(f"{r},{c}", True,
+                                    TILE_ORIGIN if (r, c) == (0, 0) else TILE)
+                screen.blit(label, (mid[0] - label.get_width() // 2,
+                                    mid[1] - label.get_height() // 2))
+    if here is not None:
+        r, c = here
+        if grid.inside(r, c):
+            poly = [view.to_screen(x, y) for x, y in grid.cell(r, c)]
+            pygame.draw.polygon(screen, MIDPOINT, poly, 3)
 
 
 def save_csv(sensors, kept):
@@ -333,6 +366,18 @@ def main():
                    help="seconds of empty carpet to learn when B is pressed")
     p.add_argument("--crop", action="store_true",
                    help="start with the carpet crop on (V cycles it anyway)")
+    p.add_argument("--rows", type=int, default=5, help="the game's grid (default 5)")
+    p.add_argument("--cols", type=int, default=5)
+    p.add_argument("--osc-host", default="127.0.0.1",
+                   help="where the Processing sketch is (default this machine)")
+    p.add_argument("--osc-port", type=int, default=6800,
+                   help="the sketch's /position port (default 6800)")
+    p.add_argument("--edge", type=float, default=0.05,
+                   help="metres past the carpet edge still counted as on it, "
+                        "since the sensors cannot tell closer than that "
+                        "(default %(default)s; 0 for none)")
+    p.add_argument("--send", action="store_true",
+                   help="start sending to Processing (O toggles it anyway)")
     p.add_argument("--seconds", type=float, help="auto-quit after N seconds (testing)")
     p.add_argument("--shot", help="save a screenshot on quit (testing)")
     args = p.parse_args()
@@ -366,6 +411,10 @@ def main():
     learning_until = None
     learned_at = {}
     tracked_rotations = {}
+    grid_rot, grid_mirror = cg.load_setting(GRID_FILE)
+    sending = args.send
+    osc = None
+    sent_tile, sent_count = None, 0
     note_box = [""]          # a list so the calibrate thread can write to it
     loaded = False
     dragging = False
@@ -436,6 +485,18 @@ def main():
                     show_grid = not show_grid
                 elif k == pygame.K_r:
                     view.scale, view.pan = 110.0, [0.0, 0.0]
+                elif k == pygame.K_o:
+                    sending = not sending
+                    note_box[0] = (f"sending to Processing at {args.osc_host}:{args.osc_port}"
+                                   if sending else "stopped sending to Processing")
+                elif k == pygame.K_y:
+                    grid_rot = (grid_rot + 1) % 4
+                    cg.save_setting(GRID_FILE, grid_rot, grid_mirror)
+                    note_box[0] = f"grid turned - tile 0,0 is now corner {grid_rot + 1} of 4"
+                elif k == pygame.K_m:
+                    grid_mirror = not grid_mirror
+                    cg.save_setting(GRID_FILE, grid_rot, grid_mirror)
+                    note_box[0] = "grid mirrored - rows and columns swapped"
 
         # once the serial numbers are known, bring back any saved alignment
         if not loaded and all(s.serial or s.error for s in sensors):
@@ -447,8 +508,11 @@ def main():
             draw_grid(screen, view, args.tile)
         draw_rings(screen, view, font)
 
-        corners = carpet_corners(sensors) if crop >= 2 else None
+        square = carpet_corners(sensors)
+        corners = square if crop >= 2 else None
         draw_carpet(screen, view, corners, sensors, crop, args.fov)
+        grid = (cg.CarpetGrid(square, args.rows, args.cols, grid_rot, grid_mirror)
+                if square is not None else None)
 
         kept_now, seen_now = 0, 0
         people_points = []
@@ -528,8 +592,26 @@ def main():
             if fresh_scan:
                 merged = np.vstack(people_points) if people_points else np.zeros((0, 2))
                 tracked.update(time.time(), person.find_blobs(merged))
+                # Send once per fresh rotation, and only a real position: when the
+                # person is lost nothing goes out, so the sketch keeps the last tile
+                # rather than being told something made up.
+                if sending and grid is not None and tracked.position is not None:
+                    if osc is None and udp_client is not None:
+                        osc = udp_client.SimpleUDPClient(args.osc_host, args.osc_port)
+                    if osc is not None:
+                        col, row = grid.to_grid(tracked.position, args.edge)
+                        x_mm, y_mm = cg.to_sketch_mm(col, row)
+                        osc.send_message("/position", [x_mm, y_mm])
+                        sent_tile = cg.sketch_tile(x_mm, y_mm)
+                        sent_count += 1
             else:
                 tracked.tick(time.time())
+
+        if grid is not None and (crop >= 2 or sending):
+            here = (grid.tile(tracked.position)
+                    if tracking and tracked.position is not None else None)
+            draw_carpet_grid(screen, view, font, grid, here)
+        if tracking:
             draw_person(screen, view, font, tracked)
 
         mode_text = ("off", f"wedge {args.fov:.0f} deg",
@@ -561,6 +643,23 @@ def main():
                           + ("" if background.ready else "   (no carpet learned yet)")
                           + seen_ago, DIM))
 
+        lines.append(("", DIM))
+        if grid is None:
+            lines.append(("processing     needs both sensors lined up first", DIM))
+        elif not sending:
+            lines.append((f"processing     off   (O to send)   grid {grid.rows}x{grid.cols}, "
+                          f"tiles {grid.tile_m*100:.0f} cm", DIM))
+        elif udp_client is None:
+            lines.append(("processing     python-osc is not installed", WARN))
+        else:
+            where = ("nothing sent yet - nobody tracked" if sent_tile is None else
+                     f"row {sent_tile[0]} col {sent_tile[1]}"
+                     + ("" if grid.inside(*sent_tile) else "   OFF THE GRID"))
+            lines.append((f"processing     -> {args.osc_host}:{args.osc_port}   {where}",
+                          OK if sent_tile is not None else WARN))
+            lines.append((f"               {sent_count} sent   Y turns the grid, "
+                          f"M mirrors it", DIM))
+
         live = [s for s in sensors if s.rotations and not s.error]
         if not live:
             head, colour = "waiting for the sensors...", WARN
@@ -580,9 +679,10 @@ def main():
         for row, help_text in enumerate((
                 "TAB pick a sensor   arrows move   < > turn   K align   0 reset   S save   L load",
                 "V carpet   B learn the empty carpet   T person   "
-                "P trails   G grid   C csv   R view   ESC quit")):
+                "P trails   G grid   C csv   R view   ESC quit",
+                "O send to Processing   Y turn the game grid   M mirror it")):
             hint = font.render(help_text, True, DIM)
-            screen.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 46 + row * 20))
+            screen.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 66 + row * 20))
 
         pygame.display.flip()
         clock.tick(60)

@@ -252,6 +252,49 @@ then stands still for a second, then gives up and says so. It never keeps
 publishing a position as though it were fresh: the state and the age of the
 last real sighting are always on screen.
 
+## Driving the Processing sketch
+
+The live view can send the person it is following straight to the game
+(`smartlab_w26/gridGameWinter`), in the message it already understands:
+`/position x y`, two floats in millimetres, to UDP **6800**. The sketch needs no
+changes.
+
+```bash
+python3 lidar_live.py --crop --track
+```
+
+Then `B` (carpet empty), and **`O`** to start sending. In the sketch, click
+START and wait out the "Level 1" screen - it ignores positions until then.
+
+**The carpet fills the grid, whatever its size.** The two sensors stand on
+opposite corners, which fixes the whole square; it is cut into the game's 5 x 5
+grid and positions go out as the millimetres that make the sketch's own
+arithmetic (`col = floor(x/500)`, `row = floor(-y/500)`) land on the right
+tile. A 1.1 m carpet and a 2.5 m one both fill the same grid. The tiles are
+drawn and labelled `row,col` on the carpet in the live view, so the two windows
+can be compared directly.
+
+**Which corner is tile 0,0** can't be known from the sensors - it depends where
+the screen is. Stand in a corner and watch the sketch: `Y` turns the grid round
+the four corners, `M` mirrors it if left and right come out swapped. The choice
+is remembered in `carpet_grid.json`.
+
+**Stepping off the carpet is sent as it is.** The sketch treats off-grid as a
+game event (a bell opportunity), so positions are not clamped - except within
+5 cm of the edge (`--edge`), which is closer than the sensors can tell apart.
+Without that, walking down an edge tile of a small carpet rang false bells on
+turns. When the person is lost nothing is sent, so the sketch keeps the last
+tile rather than being told something made up.
+
+Don't run the foot-sensor script at the same time: it sends `/position` to the
+same port, and the sketch would get both.
+
+Headless, against two fake sensors at a real calibration, with a person
+walking the edges, crossing the middle and finally stepping 13 cm off: nothing
+sent before they stepped on, 97-98% of messages on the tile they had been on in
+the last 0.4 s and all within one tile, no false off-grids, and every message
+while they stood off the edge sent as off the grid.
+
 ## Recording and plotting
 
 ```bash
@@ -268,6 +311,7 @@ python3 lidar_plot.py walk.csv                       # top-down picture
 | `calibrate_pair.py` | calibration by letting the sensors see each other |
 | `check_pair.py` | why they cannot see each other, when they cannot |
 | `pick_pair.py` | calibrate by clicking on the other sensor yourself |
+| `carpet_grid.py` | the carpet cut into the game's grid, in the sketch's units |
 | `hardware/` | the 3D-printable calibration jig, and how to print it |
 | `area.py` | the wedge and carpet-square filters |
 | `tracker.py` | background, blobs, and following a person |
@@ -276,6 +320,7 @@ python3 lidar_plot.py walk.csv                       # top-down picture
 | `lidar_plot.py` | draw a recorded CSV |
 | `tests/test_align.py` | alignment checked against known answers |
 | `tests/test_calibrate_pair.py` | mutual sighting checked against a fake room |
+| `tests/test_carpet_grid.py` | every tile round-tripped through the sketch's own maths |
 | `tests/test_area.py` | carpet filter checked against known geometry |
 | `tests/test_tracker.py` | tracking checked against a made-up walk |
 
@@ -284,6 +329,7 @@ python3 lidar_plot.py walk.csv                       # top-down picture
 ```bash
 python3 tests/test_align.py
 python3 tests/test_calibrate_pair.py
+python3 tests/test_carpet_grid.py
 python3 tests/test_area.py
 python3 tests/test_tracker.py
 ```
