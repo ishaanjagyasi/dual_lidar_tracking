@@ -1,403 +1,69 @@
 # dual_lidar_tracking
 
-Reading two SLAMTEC RPLIDAR C1 scanners at once, drawing them live, and lining
-them up with each other automatically.
+Tracks one person on a square carpet with two RPLIDAR C1 sensors, and sends
+their tile to the Processing game (`smartlab_w26/gridGameWinter`).
 
-The eventual goal is tracking feet on a floor grid for an interactive game, by
-scanning a thin slice of air just above the floor. What's here now is the
-groundwork: reliable reading, a live view, and calibration between the two
-sensors. **Foot detection is not built yet.**
+## Setup
 
-## Hardware
-
-- 2 x RPLIDAR C1, over USB (they appear as `/dev/cu.usbserial-*` on macOS)
-- 460800 baud, ~10 rotations/second, ~450 points per rotation (~0.8 deg apart)
-- Blind zone 0.05 m, useful range 12 m
-
-Two sensors are used because one foot can hide another. Put them at opposite
-corners, at shoe height, 1-2 cm apart in height so their lasers don't confuse
-each other.
-
-## Install
+- 2 x RPLIDAR C1 over USB, one at each end of the carpet's diagonal, same height.
+- Print one jig per sensor from [hardware/](hardware/) (Bambu presets in
+  `hardware/bambu/`). Point each jig's arrow at the other sensor.
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Live view
-
-```bash
-python3 lidar_live.py              # every lidar it can find
-python3 lidar_live.py --port /dev/cu.usbserial-2130
-```
-
-Each sensor draws in its own colour. They start stacked on top of each other,
-because a sensor only knows distances in its own coordinates.
-
-| Key | |
-|---|---|
-| `TAB` | pick a sensor to move |
-| arrows | move it |
-| `<` `>` | turn it |
-| `K` | **line it up automatically** |
-| `V` | carpet crop: off / wedge / wedge + square |
-| `B` | learn the empty carpet (stay off it) |
-| `T` | follow a person |
-| `O` | send the person to the Processing sketch, on / off |
-| `Y` / `M` | turn / mirror the game grid on the carpet |
-| `S` / `L` | save / reload alignment |
-| `0` | reset the picked sensor |
-| `C` | save what's on screen as a CSV |
-| `P` / `G` | trails / 500 mm grid |
-| drag, wheel, `R` | pan, zoom, reset view |
-| `ESC` | quit |
-
-Alignment is stored in `lidar_align.json`, keyed by each sensor's serial
-number, so it survives the ports swapping around.
-
-## Lining the sensors up
-
-### Let them see each other (`calibrate_pair.py`)
-
-```bash
-python3 calibrate_pair.py
-```
-
-The sensors are objects sitting in each other's view. If both are at the same
-height, A sees B and B sees A, and that one mutual sighting gives the answer
-outright: A measured the direction and distance to B, and B measured the
-direction back, which is how far B is turned. Three unknowns, three
-measurements, no searching and nothing to get stuck in.
-
-First, print the jig in [hardware/](hardware/) - one per sensor - drop it over
-each unit and point its arrow at the other sensor. It stands two 25 mm posts
-120 mm tall, 160 mm apart, one either side of the spin axis.
-
-![the jig with a C1 sitting in it](hardware/fitted.png)
-
-It has to be posts beside the sensor rather than something on top of it,
-because SLAMTEC's own numbers rule a hat out. The laser sits at 29.8 mm and the
-case is 41.3 mm tall, so the beam leaves 11.5 mm *below* the top and anything
-resting up there is invisible. And the scan plane is only promised level to
-within 1.5 degrees, which across 3.4 m of carpet is 89 mm of drift, so a short
-marker at exactly 29.8 mm can be missed entirely. Two posts also beat one:
-nothing can sit on the axis, since that is where the sensor is, but the
-midpoint of a pair straddling it is the axis exactly, however the jig is
-turned. [hardware/README.md](hardware/README.md) has the rest.
-
-There is a raised version too - `riser_h` stands the sensor on a plinth, 80 mm
-in the STL provided, so it scans at shin height rather than shoe height and
-sees a walking leg more of the time. The plinth sits under the sensor and
-below the beam, so it blocks nothing; the posts grow to match.
-
-Without a jig it falls back to single clumps, so a drinks can standing against
-each sensor still works (`--no-jig`); it is just less accurate, because one
-lone marker cannot sit on the axis. Either way, stand clear - a person in the
-room is one more marker-shaped thing.
-
-It reads one sensor at a time (everything being measured is standing still, so
-the two scans needn't be simultaneous) and stacks about two seconds of
-rotations each. Stacking matters: a single rotation puts readings 0.8° apart,
-one hit every 4 cm at 3 m, so a can gets two. The sensor doesn't land on the
-same angles each time round, so twenty rotations give twenty times the detail.
-
-```
-  matching on the jig's two posts: 2 for A, 1 for B, 2 pairing(s) tried
-    A saw B at    37.56deg   3.270 m  (jig, posts 160 mm apart, 26 points)
-    B saw A at    17.58deg   3.267 m  (jig, posts 158 mm apart, 22 points)
-    the two measured the gap between them as 3.288 m and 3.284 m - 4 mm apart
-    so B is at (+2.003, +2.605) m, turned -160.02deg
-    the rooms then line up to 5 mm off the walls, 3533 points matched (90%)
-  final: (+2.003, +2.605) m, turned -160.02deg
-```
-
-It can't tell a marker from the furniture, so it doesn't try - and it doesn't
-simply trust the jig either, because a room can easily throw up two odds and
-ends 160 mm apart. The jig is tried first and single clumps second, and
-whatever is proposed has to survive two checks that only the right pairing
-can:
-
-- **both sides must agree on the gap.** A and B are measuring the same distance
-  between the two of them, so two readings of one number that must match - a
-  free check costing nothing.
-- **the rooms must line up.** With the right pairing B's whole scan lands on
-  A's walls; with a wrong one it lands nowhere near.
-
-If two different pairings both pass, it says so and refuses to save rather than
-pick one. That usually means something marker-shaped is still in the room.
-
-It then hands its answer to ICP to polish, because a sighting can't win the
-last couple of centimetres: a lidar measures the near *surface* of a marker and
-a marker is never exactly on the spin axis. The sighting gets ICP into the
-right basin; ICP squeezes out the rest against the walls. `--no-polish` shows
-the raw sighting. The result goes into the same `lidar_align.json` the live
-view reads, keyed by serial number, after asking first.
-
-### Pointing at it yourself (`pick_pair.py`)
+## 1. Calibrate
 
 ```bash
 python3 pick_pair.py
 ```
 
-Two panels, one per sensor, **both live**. Click where the **other** sensor is
-in each. Those are the same two sightings the automatic version works from, and
-everything after the click is identical.
+Two live panels, one per sensor. In each, click on the **other** sensor (wave a
+hand next to it to see which blob moves). Both distances should match. `P`
+polishes, `S` saves to `lidar_align.json`.
 
-Because it is live you can **wave a hand next to one sensor and watch which
-blob moves** in the other's panel. That settles which thing is which in a
-couple of seconds, which is the whole reason for the live view. What you see is
-the last three seconds of rotations stacked together - one rotation alone puts
-readings 38 mm apart at 3 m and a 25 mm post would flicker in and out - with
-the newest rotation drawn brighter, so anything moving leaves a trail. `SPACE`
-freezes both panels when you want the picture to hold still while you click.
+Other options: `calibrate_pair.py` (automatic), `check_pair.py` (why it fails).
 
-Clicking snaps to what is really there, and says which of three things it
-found: the jig's two posts (their midpoint is the other sensor's spin axis
-exactly - the best case), or one clump (pushed out by half its width, because
-the laser stops at the near face), or nothing, in which case your click is
-taken as-is and it tells you so. A sloppy click is never quietly treated as a
-precise one.
-
-The two distances are the check. A and B are measuring the same gap between
-them, so the numbers should match; if they differ by more than a few
-centimetres one of the clicks is on something else, and it says so in red.
-
-```
-click  pick        BACKSPACE clear      SPACE freeze     N snap on/off
-P      polish with ICP                  S save           wheel zoom
-```
-
-In a fake room, a click 150 mm off the real position still lands within 12 mm
-after snapping, giving a 10 mm answer - 1 mm once `P` has polished it.
-
-### When it won't calibrate (`check_pair.py`)
-
-```bash
-python3 check_pair.py
-```
-
-`calibrate_pair.py` says when it fails but not always why, because by then it
-is reasoning about which marker is which. This looks further back and answers
-the two questions underneath: is each jig seated (every sensor should see its
-own two posts at about 65 mm, 180 degrees apart), and are both sensors in the
-same space at all.
-
-That second one is the useful part. Two scans of one room can be laid on top of
-each other; two scans of different rooms - or of one room split by a wall or a
-sofa - cannot. It searches every plausible place and heading for the second
-sensor and reports the best fit there is. A real match is a few millimetres off
-the walls with most of the scan matched. Anything else means no amount of
-turning jigs will help.
-
-### Or by eye, then `K`
-
-Nudge one roughly into place by eye, clear people out of the area, then press
-`K`. It matches the shapes both sensors can see (ICP - iterative closest
-point), and reports how well it did:
-
-```
-B: aligned: 7 mm off the walls, 310 points matched   (S to keep it)
-```
-
-It refuses rather than guessing when it can't be trusted:
-
-- **poor match** - the starting guess was too far off
-- **the shape here is too plain** - a bare corridor looks the same wherever you
-  slide along it, so it pokes its own answer to check whether the room shape
-  really pins it down
-- **not enough points yet** - let the sensors spin a moment
-
-Each point is matched to the *wall* its nearest neighbour sits on, not to that
-point itself. The two sensors never sample the same spots on a wall, so
-point-to-point matching drags the answer along the wall by a few centimetres.
-
-## Cropping to the carpet
-
-The sensors sit at opposite ends of the carpet's diagonal, so `V` cuts away
-everything that isn't on it. Two filters, both worked out from where the
-sensors are, so nothing has to be measured and the carpet can be any size:
-
-- **the wedge** - each sensor only looks in a cone facing the other one, 145
-  degrees by default (`--fov`). A square corner spans exactly 90 degrees, so
-  anything above that is margin for catching a foot stepping off the edge.
-- **the square** - two opposite corners fix a square completely, so points
-  outside it are dropped. `--margin` (0.2 m by default) keeps a little of the
-  floor just outside the edge.
-
-Dropped points are still drawn, very dim, so you can see what is being cut.
-
-This assumes the carpet is square. A rectangle isn't fixed by its diagonal
-alone and would need its side length measured too.
-
-## Following a person
-
-`B` with the carpet empty, then `T`. It reports the point midway between your
-two legs, in metres from sensor A.
-
-It works whether the sensors are low enough to see shoes or high enough to see
-shins - the logic only cares that there are one or two blobs, not what part of
-a leg they are.
-
-1. **background** - with the carpet empty, it remembers how far the nearest
-   static thing is at every angle. Anything nearer than that later is a person.
-2. **blobs** - the leftover points are grouped. Each blob is a leg.
-3. **midpoint** - two blobs give the point between them. One wide blob is both
-   legs together. One narrow blob is a single leg, and the midpoint is placed
-   using the offset last measured between that leg and the middle.
-
-**A leg in mid-stride lifts clear of the scan slice and disappears, so seeing
-only one is normal while walking.** In a simulated lap that was the case on
-182 of 238 readings, which is why the one-leg rule matters more than it sounds.
-
-When nothing is visible at all it keeps moving at the last speed for 0.3 s,
-then stands still for a second, then gives up and says so. It never keeps
-publishing a position as though it were fresh: the state and the age of the
-last real sighting are always on screen.
-
-## Driving the Processing sketch
-
-The live view can send the person it is following straight to the game
-(`smartlab_w26/gridGameWinter`), in the message it already understands:
-`/position x y`, two floats in millimetres, to UDP **6800**. The sketch needs no
-changes.
+## 2. Track and send to Processing
 
 ```bash
 python3 lidar_live.py --crop --track
 ```
 
-Then `B` (carpet empty), and **`O`** to start sending. In the sketch, click
-START and wait out the "Level 1" screen - it ignores positions until then.
+1. Keep the carpet empty, press `B`.
+2. Press `O` to start sending.
+3. In Processing, click START.
+4. Stand in a corner. If the wrong tile lights, press `Y` (turn grid) or `M`
+   (mirror) until it's right. This is saved.
 
-**The carpet fills the grid, whatever its size.** The two sensors stand on
-opposite corners, which fixes the whole square; it is cut into the game's 5 x 5
-grid and positions go out as the millimetres that make the sketch's own
-arithmetic (`col = floor(x/500)`, `row = floor(-y/500)`) land on the right
-tile. A 1.1 m carpet and a 2.5 m one both fill the same grid. The tiles are
-drawn and labelled `row,col` on the carpet in the live view, so the two windows
-can be compared directly.
+Sends `/position x y` (mm) to UDP 6800. Don't run the foot-sensor script at the
+same time.
 
-**Which corner is tile 0,0** can't be known from the sensors - it depends where
-the screen is. Stand in a corner and watch the sketch: `Y` turns the grid round
-the four corners, `M` mirrors it if left and right come out swapped. The choice
-is remembered in `carpet_grid.json`.
-
-**Stepping off the carpet is sent as it is.** The sketch treats off-grid as a
-game event (a bell opportunity), so positions are not clamped - except within
-5 cm of the edge (`--edge`), which is closer than the sensors can tell apart.
-Without that, walking down an edge tile of a small carpet rang false bells on
-turns. When the person is lost nothing is sent, so the sketch keeps the last
-tile rather than being told something made up.
-
-Don't run the foot-sensor script at the same time: it sends `/position` to the
-same port, and the sketch would get both.
-
-Headless, against two fake sensors at a real calibration, with a person
-walking the edges, crossing the middle and finally stepping 13 cm off: nothing
-sent before they stepped on, 97-98% of messages on the tile they had been on in
-the last 0.4 s and all within one tile, no false off-grids, and every message
-while they stood off the edge sent as off the grid.
-
-## Recording and plotting
-
-```bash
-python3 lidar_dump.py --seconds 10 --csv walk.csv    # record, with a text summary
-python3 lidar_plot.py walk.csv                       # top-down picture
-```
+| Key | |
+|---|---|
+| `B` | learn the empty carpet |
+| `T` | follow a person |
+| `O` | send to Processing on / off |
+| `Y` / `M` | turn / mirror the grid |
+| `V` | carpet crop mode |
+| `K` | auto-align by matching walls |
+| `S` / `L` | save / reload calibration |
+| `ESC` | quit |
 
 ## Files
 
 | | |
 |---|---|
-| `lidar_io.py` | opening, reading and closing a sensor |
-| `align.py` | automatic alignment between sensors (ICP) |
-| `calibrate_pair.py` | calibration by letting the sensors see each other |
-| `check_pair.py` | why they cannot see each other, when they cannot |
-| `pick_pair.py` | calibrate by clicking on the other sensor yourself |
-| `carpet_grid.py` | the carpet cut into the game's grid, in the sketch's units |
-| `hardware/` | the 3D-printable calibration jig, and how to print it |
-| `area.py` | the wedge and carpet-square filters |
-| `tracker.py` | background, blobs, and following a person |
-| `lidar_live.py` | the live view |
-| `lidar_dump.py` | record to CSV |
-| `lidar_plot.py` | draw a recorded CSV |
-| `tests/test_align.py` | alignment checked against known answers |
-| `tests/test_calibrate_pair.py` | mutual sighting checked against a fake room |
-| `tests/test_carpet_grid.py` | every tile round-tripped through the sketch's own maths |
-| `tests/test_area.py` | carpet filter checked against known geometry |
-| `tests/test_tracker.py` | tracking checked against a made-up walk |
-
-## Tests
-
-```bash
-python3 tests/test_align.py
-python3 tests/test_calibrate_pair.py
-python3 tests/test_carpet_grid.py
-python3 tests/test_area.py
-python3 tests/test_tracker.py
-```
-
-Builds a fake room with two sensors a known distance apart and checks the
-alignment recovers it: within about a millimetre and a few hundredths of a
-degree in a normal room, still working with 10 mm of noise or a 35-degree error
-in the starting guess, and refusing (rather than guessing) when the guess is 90
-degrees out or the room is a bare corridor.
-
-`test_calibrate_pair.py` ray-casts an L-shaped room with a marker at each
-sensor and checks the mutual sighting recovers the second sensor's place.
-With the printed jig - two posts and the sensor's own case between them, all
-cast properly - it comes out **4 mm** on a clean room and 14 mm with 10 mm of
-noise. With a single can instead: 7 mm clean, under 5 cm noisy, dropping to a
-couple of millimetres once ICP has polished it.
-The room is L-shaped on purpose - a plain square has four-fold symmetry, so an
-answer turned 90 degrees would overlap just as well and nothing could tell them
-apart. It also checks the awkward cases: a bin left standing in the room, no
-markers at all, a decoy at exactly the distance that would fool the agreement
-check, and the second sensor being in another room entirely. For the jig: two
-bins left standing exactly 160 mm apart, and a jig turned a quarter turn out so
-one post hides behind the other - which it spots, refuses, and names the right
-sensor to go and turn. The rule it holds to throughout is that a wrong answer
-is never returned quietly: it is either right, or it refuses and says why.
-
-Worth knowing from writing those tests: a far corner seen edge-on also reads as
-a small isolated clump, because the wall running away from the sensor is
-sampled too sparsely for its readings to join up. Finding candidates is
-deliberately permissive; the agreement and overlap checks are what judge them.
-
-`test_area.py` checks the carpet square comes out right for any size at any
-angle, that the 90-degree fact holds, and that a point just off the edge is
-dropped unless the margin covers it.
-
-`test_tracker.py` walks an imaginary person past imaginary sensors: both legs
-visible, one leg vanishing mid-stride, feet together, a total dropout, a bag
-left on the carpet, and an impossible jump. Running the whole app against two
-fake sensors with someone walking a lap, the midpoint stayed within 4 cm
-(median; 10 cm at worst) of where that person actually was, never gave up while
-they were walking, and reported "lost" once they left.
-
-## Notes
-
-The `rplidar` Python library was written for the older A1/A2, and two things it
-does trip up the C1, both handled in `lidar_io.py`:
-
-- it toggles the serial DTR line to start a "motor" every time you iterate,
-  which the C1 doesn't need
-- it reads one 5-byte measurement per system call, which can't keep up with
-  5000 per second
-
-Also worth knowing: the sensor takes about 2 seconds to reach full speed, so
-rates measured right after connecting look low.
-
-## Vendor material
-
-`vendor/` holds SLAMTEC's own files, unmodified, so the protocol details stay
-next to the code that relies on them:
-
-- `vendor/docs/` - C1 datasheet and kit user manual, plus the S-series protocol
-  and SDK manuals. The C1 speaks the same protocols.
-- `vendor/sdk/` - the official `rplidar_sdk` (C++). Not used at runtime, but it
-  is the reference for anything the Python library doesn't cover, such as the
-  high-speed "dense capsule" scan mode.
-
-SLAMTEC's SDK is BSD 2-clause; its `LICENSE` is kept with it. Not included: the
-RoboStudio app (Windows only), the SDK zip (same as the extracted folder), and
-the C1 3D model, all available from SLAMTEC.
+| `lidar_live.py` | live view, tracking, sending |
+| `pick_pair.py` | calibrate by clicking |
+| `calibrate_pair.py` / `check_pair.py` | automatic calibration / diagnosis |
+| `tracker.py` | finding legs and following a person |
+| `carpet_grid.py` | carpet to game grid |
+| `area.py` | carpet crop |
+| `align.py` | wall matching (ICP) |
+| `lidar_io.py` | reading the sensors |
+| `lidar_dump.py` / `lidar_plot.py` | record / plot a CSV |
+| `hardware/` | 3D-printable jig |
+| `tests/` | run each with `python3 tests/<file>.py` |
+| `vendor/` | SLAMTEC docs and SDK |
