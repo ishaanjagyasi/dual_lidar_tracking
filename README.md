@@ -43,6 +43,8 @@ because a sensor only knows distances in its own coordinates.
 | `V` | carpet crop: off / wedge / wedge + square |
 | `B` | learn the empty carpet (stay off it) |
 | `T` | follow a person |
+| `O` | send the person to the Processing sketch, on / off |
+| `Y` / `M` | turn / mirror the game grid on the carpet |
 | `S` / `L` | save / reload alignment |
 | `0` | reset the picked sensor |
 | `C` | save what's on screen as a CSV |
