@@ -24,7 +24,7 @@ Two live panels, one per sensor. In each, click on the **other** sensor (wave a
 hand next to it to see which blob moves). Both distances should match. `P`
 polishes, `S` saves to `lidar_align.json`.
 
-Other options: `calibrate_pair.py` (automatic), `check_pair.py` (why it fails).
+Other option: `calibrate_pair.py` (automatic).
 
 ## 2. Track and send to Processing
 
@@ -58,14 +58,12 @@ same time.
 |---|---|
 | `lidar_live.py` | live view, tracking, sending |
 | `pick_pair.py` | calibrate by clicking |
-| `calibrate_pair.py` / `check_pair.py` | automatic calibration / diagnosis |
+| `calibrate_pair.py` | automatic calibration (also used by `pick_pair.py`) |
 | `tracker.py` | finding legs and following a person |
 | `carpet_grid.py` | carpet to game grid |
 | `area.py` | carpet crop |
 | `align.py` | wall matching (ICP) |
 | `lidar_io.py` | reading the sensors |
-| `lidar_dump.py` / `lidar_plot.py` | record / plot a CSV |
 | `gridGameWinter/` | the Processing game |
 | `hardware/` | 3D-printable jig |
-| `tests/` | run each with `python3 tests/<file>.py` |
 | `vendor/` | SLAMTEC docs and SDK |
