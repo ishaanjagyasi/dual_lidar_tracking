@@ -78,6 +78,20 @@ def inside_square(points, corners, margin_m=0.0):
     return (along1 >= lo) & (along1 <= hi) & (along2 >= lo) & (along2 <= hi)
 
 
+def grow_square(corners, margin_m):
+    """The same square pushed out by margin_m on all four sides."""
+    origin = corners[0]
+    e1 = corners[1] - origin
+    e2 = corners[3] - origin
+    side = math.hypot(*e1)
+    e1, e2 = e1 / side, e2 / side
+    m = margin_m
+    return np.array([origin - m * e1 - m * e2,
+                     corners[1] + m * e1 - m * e2,
+                     corners[2] + m * e1 + m * e2,
+                     corners[3] - m * e1 + m * e2])
+
+
 def carpet_mask(points, sensor_xy, facing_xy, fov_deg, corners=None, margin_m=0.0):
     """Everything together: in the wedge, and on the carpet if we know where
     the carpet is."""

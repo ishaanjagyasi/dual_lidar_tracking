@@ -15,9 +15,8 @@
 # enough to see shoes or high enough to see shins.
 #
 # V crops to the carpet: the two sensors sit at opposite ends of its diagonal,
-# so each one only looks through a wedge facing the other (145 degrees by
-# default), and anything outside the square those two corners make is dropped.
-# Both come from where the sensors are, so the carpet can be any size.
+# which fixes the square. Everything more than --margin (2 m by default)
+# outside that square, on any side, is dropped.
 #
 # K lines the picked sensor up with sensor A automatically, by matching the
 # shapes both of them see (see align.py). Nudge it roughly into place first,
@@ -27,7 +26,7 @@
 #        K line it up automatically
 #        S save alignment    L reload it
 #        drag / wheel to pan and zoom   R reset view
-#        V carpet crop: off / wedge / wedge + square
+#        V carpet crop: off / square + margin
 #        B learn the empty carpet   T follow a person
 #        P trails   G 500mm grid   C save a CSV of what's on screen   ESC quit
 #        O send the person to the Processing sketch   Y turn its grid   M mirror it
@@ -72,7 +71,8 @@ WARN = (245, 180, 70)
 OK = (80, 210, 130)
 PICKED = (255, 255, 255)
 CARPET = (110, 215, 170)
-WEDGE = (55, 95, 80)
+ACQUIRE_MARGIN_M = 0.10   # a new person is only picked up this close to the mat
+ZONE = (55, 95, 80)
 DROPPED = (46, 50, 60)
 LEG = (235, 225, 120)
 MIDPOINT = (245, 90, 160)
@@ -192,23 +192,11 @@ def carpet_corners(sensors):
     return area.square_from_diagonal(sensors[0].offset[:2], sensors[1].offset[:2])
 
 
-def facing_point(sensors, n):
-    """Where sensor n is looking: the other sensor, or the middle of the others."""
-    others = [s.offset[:2] for m, s in enumerate(sensors) if m != n]
-    if not others:
-        return None
-    return np.mean(np.asarray(others, dtype=float), axis=0)
-
-
-def keep_mask(sensor, world, sensors, n, mode, fov, margin, corners):
+def keep_mask(world, mode, margin, corners):
     """Which of this sensor's points to keep, given the crop setting."""
-    if mode == 0 or len(world) == 0:
+    if mode == 0 or len(world) == 0 or corners is None:
         return np.ones(len(world), dtype=bool)
-    facing = facing_point(sensors, n)
-    if facing is None:
-        return np.ones(len(world), dtype=bool)
-    return area.carpet_mask(world, sensor.offset[:2], facing, fov,
-                            corners if mode >= 2 else None, margin)
+    return area.inside_square(world, corners, margin)
 
 
 def draw_carpet_grid(screen, view, font, grid, here):
@@ -292,28 +280,14 @@ def draw_rings(surf, view, font):
         surf.blit(font.render(f"{r} m", True, RING), (centre[0] + 4, centre[1] - px - 16))
 
 
-def draw_carpet(surf, view, corners, sensors, mode, fov):
-    """The carpet outline, and the edges of each sensor's wedge."""
-    if mode >= 1 and len(sensors) >= 2:
-        reach = float(np.hypot(*(corners[2] - corners[0]))) if corners is not None else 2.0
-        for n, s in enumerate(sensors):
-            facing = facing_point(sensors, n)
-            if facing is None:
-                continue
-            here = np.asarray(s.offset[:2], dtype=float)
-            look = facing - here
-            if np.hypot(*look) < 1e-6:
-                continue
-            look = look / np.hypot(*look)
-            for sign in (-1, 1):
-                t = math.radians(sign * fov / 2.0)
-                c, sn = math.cos(t), math.sin(t)
-                edge = here + np.array([look[0] * c - look[1] * sn,
-                                        look[0] * sn + look[1] * c]) * reach
-                pygame.draw.line(surf, WEDGE, view.to_screen(*here),
-                                 view.to_screen(*edge), 1)
-    if mode >= 2 and corners is not None:
-        pygame.draw.lines(surf, CARPET, True, [view.to_screen(*c) for c in corners], 2)
+def draw_carpet(surf, view, corners, margin):
+    """The carpet outline, and the edge of the area that is kept."""
+    if corners is None:
+        return
+    pygame.draw.lines(surf, CARPET, True, [view.to_screen(*c) for c in corners], 2)
+    if margin > 0:
+        outer = area.grow_square(corners, margin)
+        pygame.draw.lines(surf, ZONE, True, [view.to_screen(*c) for c in outer], 1)
 
 
 def draw_person(surf, view, font, tracked):
@@ -356,9 +330,7 @@ def main():
     p.add_argument("--baud", type=int, default=lidar_io.BAUD)
     p.add_argument("--persist", action="store_true", help="start with trails on")
     p.add_argument("--tile", type=float, default=0.5, help="grid square size in metres")
-    p.add_argument("--fov", type=float, default=145.0,
-                   help="how wide each sensor looks, facing the other one (degrees)")
-    p.add_argument("--margin", type=float, default=0.20,
+    p.add_argument("--margin", type=float, default=2.0,
                    help="how far past the carpet edge to still keep points (metres)")
     p.add_argument("--track", action="store_true",
                    help="start following a person (T toggles it anyway)")
@@ -403,7 +375,7 @@ def main():
     picked = 0 if len(sensors) == 1 else 1     # the one the arrows move
     persist = args.persist
     show_grid = False
-    crop = 2 if args.crop else 0      # 0 off, 1 wedge, 2 wedge + carpet square
+    crop = 2 if args.crop else 0      # 0 off, 2 carpet square + margin
     kept_points = {}
     background = person.Background()
     tracked = person.Tracker()
@@ -469,7 +441,7 @@ def main():
                 elif k == pygame.K_c:
                     note_box[0] = save_csv(sensors, kept_points)
                 elif k == pygame.K_v:
-                    crop = (crop + 1) % 3
+                    crop = 0 if crop else 2
                 elif k == pygame.K_b:
                     background = person.Background()
                     learned_at = {}
@@ -509,8 +481,10 @@ def main():
         draw_rings(screen, view, font)
 
         square = carpet_corners(sensors)
+        tracked.acquire = (None if square is None else
+                           lambda pts, sq=square: area.inside_square(pts, sq, ACQUIRE_MARGIN_M))
         corners = square if crop >= 2 else None
-        draw_carpet(screen, view, corners, sensors, crop, args.fov)
+        draw_carpet(screen, view, corners, args.margin)
         grid = (cg.CarpetGrid(square, args.rows, args.cols, grid_rot, grid_mirror)
                 if square is not None else None)
 
@@ -522,8 +496,7 @@ def main():
             if persist:
                 for old in history:
                     old_world = align.transform(align.polar_to_local(old), *s.offset)
-                    old_keep = keep_mask(s, old_world, sensors, n, crop,
-                                         args.fov, args.margin, corners)
+                    old_keep = keep_mask(old_world, crop, args.margin, corners)
                     for (x, y), ok in zip(old_world, old_keep):
                         if not ok:
                             continue
@@ -532,7 +505,7 @@ def main():
                             screen.set_at((px, py), s.trail_colour)
 
             world = align.transform(align.polar_to_local(scan), *s.offset)
-            keep = keep_mask(s, world, sensors, n, crop, args.fov, args.margin, corners)
+            keep = keep_mask(world, crop, args.margin, corners)
             kept_points[s.name] = keep
             kept_now += int(keep.sum())
             seen_now += len(scan)
@@ -614,8 +587,7 @@ def main():
         if tracking:
             draw_person(screen, view, font, tracked)
 
-        mode_text = ("off", f"wedge {args.fov:.0f} deg",
-                     f"wedge {args.fov:.0f} deg + square")[crop]
+        mode_text = f"square + {args.margin:.1f} m all round" if crop else "off"
         lines.append(("", DIM))
         lines.append((f"carpet crop    {mode_text}", CARPET if crop else DIM))
         if crop:
@@ -634,7 +606,7 @@ def main():
         elif not tracking:
             lines.append(("person         off   (T to follow, B to learn the carpet first)", DIM))
         else:
-            where = ("--" if tracked.position is None else
+            where = ("waiting for someone to step on the mat" if tracked.position is None else
                      f"{tracked.position[0]:+.2f}, {tracked.position[1]:+.2f} m")
             colour = MIDPOINT if tracked.confident else STALE
             lines.append((f"person         {tracked.state:14s} {where}", colour))

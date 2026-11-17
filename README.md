@@ -47,7 +47,7 @@ same time.
 | `T` | follow a person |
 | `O` | send to Processing on / off |
 | `Y` / `M` | turn / mirror the grid |
-| `V` | carpet crop mode |
+| `V` | crop on / off: keeps the mat + 2 m on every side (`--margin` to change) |
 | `K` | auto-align by matching walls |
 | `S` / `L` | save / reload calibration |
 | `ESC` | quit |

@@ -42,7 +42,7 @@ SEARCH_RADIUS_M = 1.20        # how far from where they were to look
 # carrying on when a leg or the whole person disappears
 STALE_AFTER_S = 0.15          # a sighting older than this counts as a gap
 PREDICT_S = 0.30              # keep moving at the last speed for this long
-HOLD_S = 1.00                 # then stand still, then give up
+HOLD_S = 2.00                 # then stand still, then give up
 SMOOTHING = 0.35              # 0 = jumpy and instant, 1 = smooth and laggy
 MAX_SPEED_MS = 4.0            # ignore jumps faster than a person can move
 
@@ -167,7 +167,10 @@ def find_blobs(points, eps=CLUSTER_EPS_M, min_points=MIN_BLOB_POINTS):
 class Tracker:
     """Follows the point midway between a person's two legs."""
 
-    def __init__(self):
+    def __init__(self, acquire=None):
+        # acquire(points Nx2) -> bool mask: where a NEW person may be picked
+        # up (the mat). Once followed, they are kept wherever they go.
+        self.acquire = acquire
         self.reset()
 
     def reset(self):
@@ -214,7 +217,10 @@ class Tracker:
             return self.position
 
         midpoint, state, legs = chosen
-        if self.position is not None and self.last_seen is not None:
+        if getattr(self, "_jumped", False):
+            self.raw = None
+            self.velocity = np.zeros(2)
+        elif self.position is not None and self.last_seen is not None:
             gap = t - self.last_seen
             if gap > 1e-6 and float(np.hypot(*(midpoint - self.raw))) / gap > MAX_SPEED_MS:
                 # too fast to be a person; sit tight rather than teleport
@@ -238,6 +244,25 @@ class Tracker:
         """Work out the midpoint from whatever blobs we can see."""
         if not blobs:
             return None
+
+        self._jumped = False
+        if self.acquire is not None:
+            inside = self.acquire(np.array([b.centre for b in blobs]))
+            on_mat = [b for b, ok in zip(blobs, inside) if ok]
+            if self.position is None:
+                # nobody followed yet: only start on someone standing on the
+                # mat, so clutter round the edge is never picked up as a person
+                blobs = on_mat
+                if not blobs:
+                    return None
+            elif on_mat and not self.acquire(self.position[None])[0] and not any(
+                    float(np.hypot(*(b.centre - self.position))) <= SEARCH_RADIUS_M
+                    for b in on_mat):
+                # following something off the mat while someone is on it: the
+                # performer is the one on the mat, so go to them
+                self.position = None
+                self._jumped = True
+                blobs = on_mat
 
         near = blobs
         if self.position is not None:
