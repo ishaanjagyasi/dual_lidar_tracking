@@ -1,7 +1,8 @@
 # dual_lidar_tracking
 
 Tracks one person on a square carpet with two RPLIDAR C1 sensors, and sends
-their tile to the Processing game (`smartlab_w26/gridGameWinter`).
+their tile to the Processing game in [gridGameWinter/](gridGameWinter/)
+(copied from `myagordon/smartlab_w26`, commit 01581b5).
 
 ## Setup
 
@@ -33,7 +34,7 @@ python3 lidar_live.py --crop --track
 
 1. Keep the carpet empty, press `B`.
 2. Press `O` to start sending.
-3. In Processing, click START.
+3. Open `gridGameWinter/gridGameWinter.pde` in Processing, run it, click START.
 4. Stand in a corner. If the wrong tile lights, press `Y` (turn grid) or `M`
    (mirror) until it's right. This is saved.
 
@@ -64,6 +65,7 @@ same time.
 | `align.py` | wall matching (ICP) |
 | `lidar_io.py` | reading the sensors |
 | `lidar_dump.py` / `lidar_plot.py` | record / plot a CSV |
+| `gridGameWinter/` | the Processing game |
 | `hardware/` | 3D-printable jig |
 | `tests/` | run each with `python3 tests/<file>.py` |
 | `vendor/` | SLAMTEC docs and SDK |
